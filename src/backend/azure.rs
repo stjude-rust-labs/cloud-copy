@@ -514,16 +514,25 @@ impl StorageBackend for AzureBlobStorageBackend {
                 header::RANGE,
                 format!("bytes={start}-{end}", start = range.start, end = range.end),
             )
-            .header(header::IF_RANGE, etag)
+            .header(header::IF_MATCH, etag)
             .header(AZURE_VERSION_HEADER, AZURE_STORAGE_VERSION)
             .send()
             .await?;
 
-        if !response.status().is_success() {
+        let status = response.status();
+
+        // Handle precondition failed as remote content modified
+        if status == StatusCode::PRECONDITION_FAILED {
+            return Err(Error::RemoteContentModified);
+        }
+
+        // Handle error response
+        if !status.is_success() {
             return Err(response.into_error().await);
         }
 
-        if response.status() != StatusCode::PARTIAL_CONTENT {
+        // We expect partial content, otherwise treat as remote content modified
+        if status != StatusCode::PARTIAL_CONTENT {
             return Err(Error::RemoteContentModified);
         }
 

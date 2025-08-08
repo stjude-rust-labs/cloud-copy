@@ -18,8 +18,10 @@ use cloud_copy::copy;
 use cloud_copy::handle_events;
 use colored::Colorize;
 use secrecy::SecretString;
+use tokio::pin;
 use tokio::sync::broadcast;
 use tokio::sync::oneshot;
+use tokio_util::sync::CancellationToken;
 use tracing_indicatif::IndicatifLayer;
 use tracing_subscriber::EnvFilter;
 use tracing_subscriber::layer::SubscriberExt;
@@ -122,7 +124,7 @@ impl Args {
 }
 
 /// Runs the application.
-async fn run() -> Result<()> {
+async fn run(cancel: CancellationToken) -> Result<()> {
     let args = Args::parse();
     match std::env::var("RUST_LOG") {
         Ok(_) => {
@@ -163,7 +165,7 @@ async fn run() -> Result<()> {
 
     let (config, source, destination) = args.into_parts();
 
-    let result = copy(config, &source, &destination, events_tx)
+    let result = copy(config, &source, &destination, cancel, events_tx)
         .await
         .with_context(|| {
             format!(
@@ -183,7 +185,7 @@ async fn run() -> Result<()> {
 
 #[cfg(unix)]
 /// An async function that waits for a termination signal.
-async fn terminate() {
+async fn terminate(cancel: CancellationToken) {
     use tokio::select;
     use tokio::signal::unix::SignalKind;
     use tokio::signal::unix::signal;
@@ -198,11 +200,12 @@ async fn terminate() {
     };
 
     info!("received {signal} signal: initiating shutdown");
+    cancel.cancel();
 }
 
 #[cfg(windows)]
 /// An async function that waits for a termination signal.
-async fn terminate() {
+async fn terminate(cancel: CancellationToken) {
     use tokio::signal::windows::ctrl_c;
     use tracing::info;
 
@@ -210,24 +213,32 @@ async fn terminate() {
     signal.await;
 
     info!("received Ctrl-C signal: initiating shutdown");
+    cancel.cancel();
 }
 
 #[tokio::main]
 async fn main() {
-    tokio::select! {
-        _ = terminate() => return,
-        r = run() => {
-            if let Err(e) = r {
-                eprintln!(
-                    "{error}: {e:?}",
-                    error = if std::io::stderr().is_terminal() {
-                        "error".red().bold()
-                    } else {
-                        "error".normal()
-                    }
-                );
+    let cancel = CancellationToken::new();
 
-                std::process::exit(1);
+    let run = run(cancel.clone());
+    pin!(run);
+
+    loop {
+        tokio::select! {
+            _ = terminate(cancel.clone()) => continue,
+            r = &mut run => {
+                if let Err(e) = r {
+                    eprintln!(
+                        "{error}: {e:?}",
+                        error = if std::io::stderr().is_terminal() {
+                            "error".red().bold()
+                        } else {
+                            "error".normal()
+                        }
+                    );
+
+                    std::process::exit(1);
+                }
             }
         }
     }

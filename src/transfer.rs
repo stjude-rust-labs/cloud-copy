@@ -19,10 +19,12 @@ use tempfile::NamedTempFile;
 use tokio::fs;
 use tokio::io::AsyncReadExt;
 use tokio::io::BufWriter;
+use tokio::select;
 use tokio::task::spawn_blocking;
 use tokio_retry2::Retry;
 use tokio_retry2::RetryError;
 use tokio_util::io::StreamReader;
+use tokio_util::sync::CancellationToken;
 use tracing::debug;
 use tracing::info;
 use url::Url;
@@ -109,8 +111,9 @@ where
         source: Url,
         destination: &Path,
         file_size: Option<u64>,
+        cancel: CancellationToken,
     ) -> Result<()> {
-        let transfer = async move || {
+        let transfer = async {
             // Start by creating the destination's parent directory
             let parent = destination.parent().ok_or(Error::InvalidPath)?;
             fs::create_dir_all(parent)
@@ -161,7 +164,11 @@ where
                 .ok();
         }
 
-        let result = transfer().await;
+        let result = select! {
+            biased;
+            _ = cancel.cancelled() => Err(Error::Canceled),
+            r = transfer => r,
+        };
 
         if let Some(events) = self.backend.events() {
             events
@@ -177,13 +184,18 @@ where
     }
 
     /// Downloads a block of a file using a ranged GET request.
-    async fn download_block(&self, source: Url, mut info: BlockDownloadInfo) -> Result<()> {
+    async fn download_block(
+        &self,
+        source: Url,
+        mut info: BlockDownloadInfo,
+        cancel: CancellationToken,
+    ) -> Result<()> {
         let id = info.id;
         let block = info.block;
         let start = info.range.start;
         let block_size = info.range.end - start;
 
-        let transfer = async move || {
+        let transfer = async {
             let response = self
                 .backend
                 .get_range(source, info.etag.as_str(), info.range)
@@ -223,7 +235,11 @@ where
                 .ok();
         }
 
-        let result = transfer().await;
+        let result = select! {
+            biased;
+            _ = cancel.cancelled() => Err(Error::Canceled),
+            r = transfer => r,
+        };
 
         if let Some(events) = self.backend.events() {
             events
@@ -244,15 +260,19 @@ where
         source: &Path,
         destination: Url,
         info: UploadInfo,
+        cancel: CancellationToken,
     ) -> Result<()> {
         // Create the upload (retryable)
         let upload = Arc::new(
             Retry::spawn_notify(
                 self.backend.config().retry_durations(),
-                || {
-                    self.backend
-                        .new_upload(destination.clone())
-                        .map_err(Error::into_retry_error)
+                || async {
+                    select! {
+                        biased;
+                        _ = cancel.cancelled() => Err(Error::Canceled),
+                        r =  self.backend.new_upload(destination.clone()) => r,
+                    }
+                    .map_err(Error::into_retry_error)
                 },
                 notify_retry,
             )
@@ -268,6 +288,7 @@ where
                 let upload = upload.clone();
                 let file = file.clone();
                 let offset = offset.clone();
+                let cancel = cancel.clone();
 
                 tokio::spawn(async move {
                     // Read the block (do not retry if this fails)
@@ -282,11 +303,12 @@ where
                     // Spawn a retryable operation to put the block
                     Retry::spawn_notify(
                         inner.backend.config().retry_durations(),
-                        || {
-                            inner
-                                .upload_block(info.id, block_num, bytes.clone(), upload.as_ref())
-                                .map_ok(|p| (block_num, p))
-                                .map_err(Error::into_retry_error)
+                        || async {
+                            select! {
+                                biased;
+                                _ = cancel.cancelled() => Err(Error::Canceled),
+                                r = inner.upload_block(info.id, block_num, bytes.clone(), upload.as_ref(), cancel.clone()) => r.map(|p| (block_num, p))
+                            }.map_err(Error::into_retry_error)
                         },
                         notify_retry,
                     )
@@ -315,7 +337,14 @@ where
         // Spawn a retryable operation to finalize the upload
         Retry::spawn_notify(
             self.backend.config().retry_durations(),
-            || upload.finalize(&parts).map_err(Error::into_retry_error),
+            || async {
+                select! {
+                    biased;
+                    _ = cancel.cancelled() => Err(Error::Canceled),
+                    r = upload.finalize(&parts) => r,
+                }
+                .map_err(Error::into_retry_error)
+            },
             notify_retry,
         )
         .await
@@ -328,6 +357,7 @@ where
         block: u64,
         bytes: Bytes,
         upload: &U,
+        cancel: CancellationToken,
     ) -> Result<U::Part> {
         if let Some(events) = self.backend.events() {
             events
@@ -339,38 +369,50 @@ where
                 .ok();
         }
 
-        let part = upload.put(id, block, bytes).await;
+        let result = select! {
+            biased;
+            _ = cancel.cancelled() => Err(Error::Canceled),
+            r = upload.put(id, block, bytes) => r,
+        };
 
         if let Some(events) = self.backend.events() {
             events
                 .send(TransferEvent::BlockCompleted {
                     id,
                     block,
-                    failed: part.is_err(),
+                    failed: result.is_err(),
                 })
                 .ok();
         }
 
-        part
+        result
     }
 }
 
 /// Represents a file transfer.
 #[derive(Clone)]
-pub struct FileTransfer<B>(Arc<FileTransferInner<B>>);
+pub struct FileTransfer<B> {
+    /// The inner file transfer.
+    inner: Arc<FileTransferInner<B>>,
+    /// The cancellation token for canceling the transfer.
+    cancel: CancellationToken,
+}
 
 impl<B> FileTransfer<B>
 where
     B: StorageBackend + Send + Sync + 'static,
 {
     /// Constructs a new file transfer with the given storage backend.
-    pub fn new(backend: B) -> Self {
+    pub fn new(backend: B, cancel: CancellationToken) -> Self {
         let pool = BufferPool::new(backend.config().parallelism());
-        Self(Arc::new(FileTransferInner {
-            backend,
-            pool,
-            next_id: AtomicU64::new(0),
-        }))
+        Self {
+            inner: Arc::new(FileTransferInner {
+                backend,
+                pool,
+                next_id: AtomicU64::new(0),
+            }),
+            cancel,
+        }
     }
 
     /// Downloads from the given source URL to the given destination path.
@@ -382,12 +424,14 @@ where
 
         // Start by walking the given URL for files to download
         let paths = Retry::spawn_notify(
-            self.0.backend.config().retry_durations(),
-            || {
-                self.0
-                    .backend
-                    .walk(source.clone())
-                    .map_err(Error::into_retry_error)
+            self.inner.backend.config().retry_durations(),
+            || async {
+                select! {
+                    biased;
+                    _ = self.cancel.cancelled() => Err(Error::Canceled),
+                    r = self.inner.backend.walk(source.clone()) => r
+                }
+                .map_err(Error::into_retry_error)
             },
             notify_retry,
         )
@@ -428,12 +472,14 @@ where
 
         // Start by sending a HEAD request for the file
         let response = Retry::spawn_notify(
-            self.0.backend.config().retry_durations(),
-            || {
-                self.0
-                    .backend
-                    .head(source.clone())
-                    .map_err(Error::into_retry_error)
+            self.inner.backend.config().retry_durations(),
+            || async {
+                select! {
+                    biased;
+                    _ = self.cancel.cancelled() => Err(Error::Canceled),
+                    r = self.inner.backend.head(source.clone()) => r
+                }
+                .map_err(Error::into_retry_error)
             },
             notify_retry,
         )
@@ -454,13 +500,15 @@ where
             .get(header::ETAG)
             .and_then(|v| v.to_str().ok());
 
-        let id = self.0.next_id();
+        let id = self.inner.next_id();
 
         // Check to see if we can download the file with blocks
+        // For block downloads, the server must have responded with the resource size,
+        // accept byte ranges, and provided a strong etag.
         let result = match (file_size, accept_ranges, etag) {
-            (Some(file_size), Some("bytes"), Some(etag)) => {
+            (Some(file_size), Some("bytes"), Some(etag)) if !etag.starts_with("W/") => {
                 // Calculate the block size and the number of blocks to download
-                let block_size = self.0.backend.block_size(file_size)?;
+                let block_size = self.inner.backend.block_size(file_size)?;
                 let num_blocks = file_size.div_ceil(block_size);
 
                 debug!(
@@ -469,7 +517,7 @@ where
                     source = source.display()
                 );
 
-                if let Some(events) = self.0.backend.events() {
+                if let Some(events) = self.inner.backend.events() {
                     events
                         .send(TransferEvent::TransferStarted {
                             id,
@@ -490,7 +538,7 @@ where
 
                 // Download the file with multiple blocks
                 Retry::spawn_notify(
-                    self.0.backend.config().retry_durations(),
+                    self.inner.backend.config().retry_durations(),
                     || {
                         self.download_in_blocks(source.clone(), &destination, info.clone())
                             .map_err(|e| match e {
@@ -526,7 +574,7 @@ where
                 }
 
                 // Download the file as a single block
-                if let Some(events) = self.0.backend.events() {
+                if let Some(events) = self.inner.backend.events() {
                     events
                         .send(TransferEvent::TransferStarted {
                             id,
@@ -538,10 +586,16 @@ where
                 }
 
                 Retry::spawn_notify(
-                    self.0.backend.config().retry_durations(),
+                    self.inner.backend.config().retry_durations(),
                     || {
-                        self.0
-                            .download(id, source.clone(), &destination, file_size)
+                        self.inner
+                            .download(
+                                id,
+                                source.clone(),
+                                &destination,
+                                file_size,
+                                self.cancel.clone(),
+                            )
                             .map_err(Error::into_retry_error)
                     },
                     notify_retry,
@@ -550,7 +604,7 @@ where
             }
         };
 
-        if let Some(events) = self.0.backend.events() {
+        if let Some(events) = self.inner.backend.events() {
             events
                 .send(TransferEvent::TransferCompleted {
                     id,
@@ -591,10 +645,11 @@ where
         let file = Arc::new(file);
         let mut stream = stream::iter(0..info.num_blocks)
             .map(|block| {
-                let inner = self.0.clone();
+                let inner = self.inner.clone();
                 let file = file.clone();
                 let source = source.clone();
                 let info = info.clone();
+                let cancel = self.cancel.clone();
 
                 tokio::spawn(async move {
                     Retry::spawn_notify(
@@ -612,6 +667,7 @@ where
                                         range: (block * info.block_size)
                                             ..((block + 1) * info.block_size).min(info.file_size),
                                     },
+                                    cancel.clone(),
                                 )
                                 .map_err(Error::into_retry_error)
                         },
@@ -621,7 +677,7 @@ where
                 })
                 .map(|r| r.expect("task panicked"))
             })
-            .buffer_unordered(self.0.backend.config().parallelism());
+            .buffer_unordered(self.inner.backend.config().parallelism());
 
         loop {
             let result = stream.next().await;
@@ -662,7 +718,7 @@ where
                 .strip_prefix(source)
                 .expect("failed to strip path prefix");
 
-            let destination = self.0.backend.join_url(
+            let destination = self.inner.backend.join_url(
                 destination.clone(),
                 relative_path
                     .components()
@@ -690,14 +746,14 @@ where
         );
 
         // Calculate the block size and the number of blocks to upload
-        let block_size = self.0.backend.block_size(file_size)?;
+        let block_size = self.inner.backend.block_size(file_size)?;
         let num_blocks = if file_size == 0 {
             0
         } else {
             file_size.div_ceil(block_size)
         };
 
-        let id = self.0.next_id();
+        let id = self.inner.next_id();
 
         debug!(
             "file `{source}` is {file_size} bytes and will be uploaded with {num_blocks} block(s) \
@@ -705,7 +761,7 @@ where
             source = source.display()
         );
 
-        if let Some(events) = self.0.backend.events() {
+        if let Some(events) = self.inner.backend.events() {
             events
                 .send(TransferEvent::TransferStarted {
                     id,
@@ -723,9 +779,13 @@ where
             num_blocks,
         };
 
-        let result = self.0.clone().upload(source, destination, info).await;
+        let result = self
+            .inner
+            .clone()
+            .upload(source, destination, info, self.cancel.clone())
+            .await;
 
-        if let Some(events) = self.0.backend.events() {
+        if let Some(events) = self.inner.backend.events() {
             events
                 .send(TransferEvent::TransferCompleted {
                     id,

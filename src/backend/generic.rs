@@ -27,11 +27,11 @@ use crate::new_http_client;
 /// Helper trait for converting responses into `Error`.
 trait IntoError {
     /// Converts a generic error response to a `Error`.
-    async fn into_copy_error(self) -> Error;
+    async fn into_error(self) -> Error;
 }
 
 impl IntoError for Response {
-    async fn into_copy_error(self) -> Error {
+    async fn into_error(self) -> Error {
         let status = self.status();
         let text: String = match self.text().await {
             Ok(text) => text,
@@ -131,7 +131,7 @@ impl StorageBackend for GenericStorageBackend {
             .await?;
 
         if !response.status().is_success() {
-            return Err(response.into_copy_error().await);
+            return Err(response.into_error().await);
         }
 
         Ok(response)
@@ -149,7 +149,7 @@ impl StorageBackend for GenericStorageBackend {
             .await?;
 
         if !response.status().is_success() {
-            return Err(response.into_copy_error().await);
+            return Err(response.into_error().await);
         }
 
         Ok(response)
@@ -172,15 +172,24 @@ impl StorageBackend for GenericStorageBackend {
                 header::RANGE,
                 format!("bytes={start}-{end}", start = range.start, end = range.end),
             )
-            .header(header::IF_RANGE, etag)
+            .header(header::IF_MATCH, etag)
             .send()
             .await?;
 
-        if !response.status().is_success() {
-            return Err(response.into_copy_error().await);
+        let status = response.status();
+
+        // Handle precondition failed as remote content modified
+        if status == StatusCode::PRECONDITION_FAILED {
+            return Err(Error::RemoteContentModified);
         }
 
-        if response.status() != StatusCode::PARTIAL_CONTENT {
+        // Handle error response
+        if !status.is_success() {
+            return Err(response.into_error().await);
+        }
+
+        // We expect partial content, otherwise treat as remote content modified
+        if status != StatusCode::PARTIAL_CONTENT {
             return Err(Error::RemoteContentModified);
         }
 

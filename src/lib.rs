@@ -25,6 +25,7 @@ use reqwest::Client;
 use reqwest::StatusCode;
 use tokio::sync::broadcast;
 use tokio_retry2::RetryError;
+use tokio_util::sync::CancellationToken;
 use tracing::warn;
 use url::Url;
 
@@ -216,6 +217,9 @@ impl fmt::Display for DisplayMessage<'_> {
 /// Represents a copy operation error.
 #[derive(Debug, thiserror::Error)]
 pub enum Error {
+    /// The operation was canceled.
+    #[error("the operation was canceled")]
+    Canceled,
     /// Copying between remote locations is not supported.
     #[error("copying between remote locations is not supported")]
     RemoteCopyNotSupported,
@@ -416,6 +420,7 @@ pub async fn copy(
     config: Config,
     source: impl Into<Location<'_>>,
     destination: impl Into<Location<'_>>,
+    cancel: CancellationToken,
     events: Option<broadcast::Sender<TransferEvent>>,
 ) -> Result<()> {
     let source = source.into();
@@ -440,15 +445,16 @@ pub async fn copy(
 
             if backend::azure::is_azure_url(&destination) {
                 let destination = backend::azure::rewrite_url(destination)?;
-                let transfer = FileTransfer::new(AzureBlobStorageBackend::new(config, events));
+                let transfer =
+                    FileTransfer::new(AzureBlobStorageBackend::new(config, events), cancel);
                 transfer.upload(source, destination).await
             } else if backend::s3::is_s3_url(&destination) {
                 let destination = backend::s3::rewrite_url(&config, destination)?;
-                let transfer = FileTransfer::new(S3StorageBackend::new(config, events));
+                let transfer = FileTransfer::new(S3StorageBackend::new(config, events), cancel);
                 transfer.upload(source, destination).await
             } else if backend::google::is_gcs_url(&destination) {
                 let destination = backend::google::rewrite_url(destination)?;
-                let transfer = FileTransfer::new(GoogleStorageBackend::new(config, events));
+                let transfer = FileTransfer::new(GoogleStorageBackend::new(config, events), cancel);
                 transfer.upload(source, destination).await
             } else {
                 Err(Error::UnsupportedUrl(destination))
@@ -469,18 +475,20 @@ pub async fn copy(
 
             if backend::azure::is_azure_url(&source) {
                 let source = backend::azure::rewrite_url(source)?;
-                let transfer = FileTransfer::new(AzureBlobStorageBackend::new(config, events));
+                let transfer =
+                    FileTransfer::new(AzureBlobStorageBackend::new(config, events), cancel);
                 transfer.download(source, destination).await
             } else if backend::s3::is_s3_url(&source) {
                 let source = backend::s3::rewrite_url(&config, source)?;
-                let transfer = FileTransfer::new(S3StorageBackend::new(config, events));
+                let transfer = FileTransfer::new(S3StorageBackend::new(config, events), cancel);
                 transfer.download(source, destination).await
             } else if backend::google::is_gcs_url(&source) {
                 let source = backend::google::rewrite_url(source)?;
-                let transfer = FileTransfer::new(GoogleStorageBackend::new(config, events));
+                let transfer = FileTransfer::new(GoogleStorageBackend::new(config, events), cancel);
                 transfer.download(source, destination).await
             } else {
-                let transfer = FileTransfer::new(GenericStorageBackend::new(config, events));
+                let transfer =
+                    FileTransfer::new(GenericStorageBackend::new(config, events), cancel);
                 transfer.download(source, destination).await
             }
         }
