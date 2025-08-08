@@ -20,7 +20,6 @@ use colored::Colorize;
 use secrecy::SecretString;
 use tokio::pin;
 use tokio::sync::broadcast;
-use tokio::sync::oneshot;
 use tokio_util::sync::CancellationToken;
 use tracing_indicatif::IndicatifLayer;
 use tracing_subscriber::EnvFilter;
@@ -156,9 +155,9 @@ async fn run(cancel: CancellationToken) -> Result<()> {
     // Only handle transfer events if for a terminal to display the progress
     let (handler, events_tx) = if std::io::stderr().is_terminal() {
         let (events_tx, events_rx) = broadcast::channel(1000);
-        let (shutdown_tx, shutdown_rx) = oneshot::channel();
-        let handler = tokio::spawn(async move { handle_events(events_rx, shutdown_rx).await });
-        (Some((shutdown_tx, handler)), Some(events_tx))
+        let cancel = cancel.clone();
+        let handler = tokio::spawn(async move { handle_events(events_rx, cancel).await });
+        (Some(handler), Some(events_tx))
     } else {
         (None, None)
     };
@@ -175,8 +174,7 @@ async fn run(cancel: CancellationToken) -> Result<()> {
             )
         });
 
-    if let Some((shutdown_tx, handler)) = handler {
-        shutdown_tx.send(()).ok();
+    if let Some(handler) = handler {
         handler.await.expect("failed to join events handler");
     }
 
@@ -225,6 +223,7 @@ async fn main() {
 
     loop {
         tokio::select! {
+            biased;
             _ = terminate(cancel.clone()) => continue,
             r = &mut run => {
                 if let Err(e) = r {

@@ -504,7 +504,7 @@ where
 
         // Check to see if we can download the file with blocks
         // For block downloads, the server must have responded with the resource size,
-        // accept byte ranges, and provided a strong etag.
+        // accept byte ranges, and provided a strong etag (does not start with `W/`).
         let result = match (file_size, accept_ranges, etag) {
             (Some(file_size), Some("bytes"), Some(etag)) if !etag.starts_with("W/") => {
                 // Calculate the block size and the number of blocks to download

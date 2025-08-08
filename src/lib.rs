@@ -518,7 +518,7 @@ pub async fn copy(
 #[cfg_attr(docsrs, doc(cfg(feature = "cli")))]
 pub async fn handle_events(
     mut events: broadcast::Receiver<TransferEvent>,
-    mut shutdown: tokio::sync::oneshot::Receiver<()>,
+    cancel: CancellationToken,
 ) {
     use std::collections::HashMap;
 
@@ -549,7 +549,7 @@ pub async fn handle_events(
 
     loop {
         tokio::select! {
-            _ = &mut shutdown => break,
+            _ = cancel.cancelled() => break,
             event = events.recv() => match event {
                 Ok(TransferEvent::TransferStarted { id, path, size, .. }) => {
                     let bar = warn_span!("progress");
