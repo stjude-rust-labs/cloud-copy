@@ -10,3 +10,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 #### Added
 
 * Added initial implementation of `cloud-copy` ([#1](https://github.com/stjude-rust-labs/cloud-copy/pull/1)).
+
+#### Changed
+
+* Changed the default parallelism to 4 times the available parallelism ([#2](https://github.com/stjude-rust-labs/cloud-copy/pull/2)).
