@@ -695,7 +695,7 @@ impl StorageBackend for S3StorageBackend {
                 header::RANGE,
                 format!("bytes={start}-{end}", start = range.start, end = range.end),
             )
-            .header(header::IF_RANGE, etag)
+            .header(header::IF_MATCH, etag)
             .build()?;
 
         if let Some(auth) = &self.config.s3.auth {
@@ -703,8 +703,21 @@ impl StorageBackend for S3StorageBackend {
         }
 
         let response = self.client.execute(request).await?;
-        if !response.status().is_success() {
+        let status = response.status();
+
+        // Handle precondition failed as remote content modified
+        if status == StatusCode::PRECONDITION_FAILED {
+            return Err(Error::RemoteContentModified);
+        }
+
+        // Handle error response
+        if !status.is_success() {
             return Err(response.into_error().await);
+        }
+
+        // We expect partial content, otherwise treat as remote content modified
+        if status != StatusCode::PARTIAL_CONTENT {
+            return Err(Error::RemoteContentModified);
         }
 
         Ok(response)
