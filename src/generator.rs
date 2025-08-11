@@ -3,7 +3,6 @@
 use std::fmt;
 
 use rand::Rng as _;
-use rand::rngs::ThreadRng;
 
 /// An alphanumeric string generator.
 ///
@@ -30,7 +29,7 @@ impl Default for Alphanumeric {
 
 impl fmt::Display for Alphanumeric {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        for c in ThreadRng::default()
+        for c in rand::rng()
             .sample_iter(&rand::distr::Alphanumeric)
             .take(self.length)
             .map(|c| c.to_ascii_lowercase())

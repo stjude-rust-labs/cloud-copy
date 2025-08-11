@@ -29,6 +29,7 @@ use tokio_util::sync::CancellationToken;
 use tracing::warn;
 use url::Url;
 
+use crate::backend::StorageBackend;
 use crate::backend::azure::AzureBlobStorageBackend;
 use crate::backend::generic::GenericStorageBackend;
 use crate::backend::google::GoogleError;
@@ -47,6 +48,7 @@ mod transfer;
 pub use backend::azure::AzureError;
 pub use backend::s3::S3Error;
 pub use config::*;
+pub use generator::*;
 
 /// The utility user agent.
 const USER_AGENT: &str = concat!("cloud-copy v", env!("CARGO_PKG_VERSION"));
@@ -60,10 +62,10 @@ const BLOCK_SIZE_THRESHOLD: u64 = 256 * ONE_MEBIBYTE;
 
 /// Helper for notifying that a network operation failed and will be retried.
 fn notify_retry(e: &Error, duration: Duration) {
-    warn!(
-        "network operation failed: {e} (retrying after {duration} seconds)",
-        duration = duration.as_secs()
-    );
+    // Duration of 0 indicates the first attempt; only print the message for a retry
+    if !duration.is_zero() {
+        warn!("network operation failed: {e}");
+    }
 }
 
 /// Represents either a local or remote location.
@@ -443,17 +445,14 @@ pub async fn copy(
                     .map_err(Into::into);
             }
 
-            if backend::azure::is_azure_url(&destination) {
-                let destination = backend::azure::rewrite_url(destination)?;
+            if AzureBlobStorageBackend::is_supported_url(&destination) {
                 let transfer =
                     FileTransfer::new(AzureBlobStorageBackend::new(config, events), cancel);
                 transfer.upload(source, destination).await
-            } else if backend::s3::is_s3_url(&destination) {
-                let destination = backend::s3::rewrite_url(&config, destination)?;
+            } else if S3StorageBackend::is_supported_url(&destination) {
                 let transfer = FileTransfer::new(S3StorageBackend::new(config, events), cancel);
                 transfer.upload(source, destination).await
-            } else if backend::google::is_gcs_url(&destination) {
-                let destination = backend::google::rewrite_url(destination)?;
+            } else if GoogleStorageBackend::is_supported_url(&destination) {
                 let transfer = FileTransfer::new(GoogleStorageBackend::new(config, events), cancel);
                 transfer.upload(source, destination).await
             } else {
@@ -473,17 +472,14 @@ pub async fn copy(
                 return Err(Error::DestinationExists(destination.to_path_buf()));
             }
 
-            if backend::azure::is_azure_url(&source) {
-                let source = backend::azure::rewrite_url(source)?;
+            if AzureBlobStorageBackend::is_supported_url(&source) {
                 let transfer =
                     FileTransfer::new(AzureBlobStorageBackend::new(config, events), cancel);
                 transfer.download(source, destination).await
-            } else if backend::s3::is_s3_url(&source) {
-                let source = backend::s3::rewrite_url(&config, source)?;
+            } else if S3StorageBackend::is_supported_url(&source) {
                 let transfer = FileTransfer::new(S3StorageBackend::new(config, events), cancel);
                 transfer.download(source, destination).await
-            } else if backend::google::is_gcs_url(&source) {
-                let source = backend::google::rewrite_url(source)?;
+            } else if GoogleStorageBackend::is_supported_url(&source) {
                 let transfer = FileTransfer::new(GoogleStorageBackend::new(config, events), cancel);
                 transfer.download(source, destination).await
             } else {

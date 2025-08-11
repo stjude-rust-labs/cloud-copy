@@ -279,60 +279,77 @@ where
             .await?,
         );
 
-        // Create a stream of tasks for uploading the blocks
-        let file = Arc::new(File::open(source)?);
-        let offset = Arc::new(AtomicU64::new(0));
-        let mut stream = stream::iter(0..info.num_blocks)
-            .map(|_| {
-                let inner = self.clone();
-                let upload = upload.clone();
-                let file = file.clone();
-                let offset = offset.clone();
-                let cancel = cancel.clone();
-
-                tokio::spawn(async move {
-                    // Read the block (do not retry if this fails)
-                    let block = inner
-                        .pool
-                        .read_block(file, info.block_size, info.file_size, &offset)
-                        .await?;
-
-                    let block_num = block.num();
-                    let bytes = block.into_bytes();
-
-                    // Spawn a retryable operation to put the block
-                    Retry::spawn_notify(
-                        inner.backend.config().retry_durations(),
-                        || async {
-                            select! {
-                                biased;
-                                _ = cancel.cancelled() => Err(Error::Canceled),
-                                r = inner.upload_block(info.id, block_num, bytes.clone(), upload.as_ref(), cancel.clone()) => r.map(|p| (block_num, p))
-                            }.map_err(Error::into_retry_error)
-                        },
-                        notify_retry,
-                    )
-                    .await
-                })
-                .map(|r| r.expect("task panicked"))
-            })
-            .buffer_unordered(self.backend.config().parallelism());
-
-        // Collect the parts that were uploaded
         let mut parts = vec![Default::default(); info.num_blocks as usize];
 
-        loop {
-            let result = stream.next().await;
-            match result {
-                Some(result) => {
-                    let (block, part) = result?;
-                    parts[block as usize] = part;
+        if info.num_blocks == 0 {
+            // Spawn a retryable operation to put a single empty block
+            let part = Retry::spawn_notify(
+                self.backend.config().retry_durations(),
+                || async {
+                    select! {
+                        biased;
+                        _ = cancel.cancelled() => Err(Error::Canceled),
+                        r = self.upload_block(info.id, 0, Bytes::new(), upload.as_ref(), cancel.clone()) => r,
+                    }.map_err(Error::into_retry_error)
+                },
+                notify_retry,
+            )
+            .await?;
+
+            parts.push(part);
+        } else {
+            // Create a stream of tasks for uploading the blocks
+            let file = Arc::new(File::open(source)?);
+            let offset = Arc::new(AtomicU64::new(0));
+            let mut stream = stream::iter(0..info.num_blocks)
+                .map(|_| {
+                    let inner = self.clone();
+                    let upload = upload.clone();
+                    let file = file.clone();
+                    let offset = offset.clone();
+                    let cancel = cancel.clone();
+
+                    tokio::spawn(async move {
+                        // Read the block (do not retry if this fails)
+                        let block = inner
+                            .pool
+                            .read_block(file, info.block_size, info.file_size, &offset)
+                            .await?;
+
+                        let block_num = block.num();
+                        let bytes = block.into_bytes();
+
+                        // Spawn a retryable operation to put the block
+                        Retry::spawn_notify(
+                            inner.backend.config().retry_durations(),
+                            || async {
+                                select! {
+                                    biased;
+                                    _ = cancel.cancelled() => Err(Error::Canceled),
+                                    r = inner.upload_block(info.id, block_num, bytes.clone(), upload.as_ref(), cancel.clone()) => r.map(|p| (block_num, p))
+                                }.map_err(Error::into_retry_error)
+                            },
+                            notify_retry,
+                        )
+                        .await
+                    })
+                    .map(|r| r.expect("task panicked"))
+                })
+                .buffer_unordered(self.backend.config().parallelism());
+
+            // Collect the parts that were uploaded
+
+            loop {
+                let result = stream.next().await;
+                match result {
+                    Some(result) => {
+                        let (block, part) = result?;
+                        parts[block as usize] = part;
+                    }
+                    None => break,
                 }
-                None => break,
             }
         }
-
-        drop(stream);
 
         // Spawn a retryable operation to finalize the upload
         Retry::spawn_notify(
@@ -420,6 +437,7 @@ where
     /// If the source URL is a "directory", the files in the directory will be
     /// downloaded relative to the destination path.
     pub async fn download(&self, source: Url, destination: impl AsRef<Path>) -> Result<()> {
+        let source: Url = self.inner.backend.rewrite_url(source)?;
         let destination = destination.as_ref();
 
         // Start by walking the given URL for files to download
@@ -701,6 +719,8 @@ where
     /// will be uploaded.
     pub async fn upload(&self, source: impl AsRef<Path>, destination: Url) -> Result<()> {
         let source = source.as_ref();
+
+        let destination = self.inner.backend.rewrite_url(destination)?;
 
         // Recursively walk the path looking for files to upload
         for entry in WalkDir::new(source) {
