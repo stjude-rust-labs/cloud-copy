@@ -64,7 +64,11 @@ const BLOCK_SIZE_THRESHOLD: u64 = 256 * ONE_MEBIBYTE;
 fn notify_retry(e: &Error, duration: Duration) {
     // Duration of 0 indicates the first attempt; only print the message for a retry
     if !duration.is_zero() {
-        warn!("network operation failed: {e}");
+        let secs = duration.as_secs();
+        warn!(
+            "network operation failed (retried after waiting {secs} second{s}): {e}",
+            s = if secs == 1 { "" } else { "s" }
+        );
     }
 }
 
