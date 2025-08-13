@@ -8,6 +8,7 @@ use anyhow::Result;
 use clap::Parser;
 use clap_verbosity_flag::Verbosity;
 use clap_verbosity_flag::WarnLevel;
+use cloud_copy::AzureConfig;
 use cloud_copy::Config;
 use cloud_copy::GoogleAuthConfig;
 use cloud_copy::GoogleConfig;
@@ -111,7 +112,9 @@ impl Args {
             block_size: self.block_size,
             parallelism: self.parallelism,
             retries: self.retries,
+            azure: AzureConfig { use_azurite: false },
             s3: S3Config {
+                use_localstack: false,
                 region: self.aws_default_region,
                 auth: s3_auth,
             },
@@ -238,6 +241,8 @@ async fn main() {
 
                     std::process::exit(1);
                 }
+
+                break;
             }
         }
     }

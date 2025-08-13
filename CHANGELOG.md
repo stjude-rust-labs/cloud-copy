@@ -9,6 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 #### Added
 
+* Added testing with emulators Azurite and localstack ([#4](https://github.com/stjude-rust-labs/cloud-copy/pull/4)).
 * Added initial implementation of `cloud-copy` ([#1](https://github.com/stjude-rust-labs/cloud-copy/pull/1)).
 
 #### Changed
@@ -17,6 +18,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 #### Fixed
 
+* Fixed a panic when running `cloud-copy` ([#4](https://github.com/stjude-rust-labs/cloud-copy/pull/4)).
 * Fixed remote content modification check with ranged downloads to use the
   `if-match` header ([#3](https://github.com/stjude-rust-labs/cloud-copy/pull/3)).
 * Fixed graceful cancellation (i.e. SIGINT) to cancel operations without

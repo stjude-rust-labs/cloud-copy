@@ -127,7 +127,47 @@ path to copy the file or directory to.
 
 ## 🧠 Running Automated Tests
 
-This section coming soon!
+Automated tests rely on having the following cloud service emulators installed:
+
+* [Azurite](https://learn.microsoft.com/en-us/azure/storage/common/storage-use-azurite?tabs=visual-studio%2Cblob-storage)
+  for Azure Blob Storage.
+* [Localstack](https://github.com/localstack/localstack) for AWS S3.
+
+Use the following command to run Azurite in a Docker container:
+
+```bash
+docker run -p 10000:10000 mcr.microsoft.com/azure-storage/azurite azurite -l /data --blobHost 0.0.0.0 --loose
+```
+
+Use the following command to run Localstack in a Docker container:
+
+```bash
+docker run -p 4566:4566 localstack/localstack:s3-latest
+```
+
+The tests expect a container/bucket with the name `cloud-copy-test` to be
+present.
+
+To create the container with Azurite, use the Azure CLI:
+
+```bash
+az storage container create --name cloud-copy-test --connection-string "DefaultEndpointsProtocol=http;AccountName=devstoreaccount1;AccountKey=Eby8vdM02xNOcqFlqUwJPLlmEtlCDXJ1OUzFT50uSRZ6IFsuFq2UVErCz4I6tq/K1SZFPTOtr/KBHBeksoGMGw==;BlobEndpoint=http://127.0.0.1:10000/devstoreaccount1"
+```
+
+To create the bucket with Localstack, use the `awslocal` tool:
+
+```bash
+awslocal s3api create-bucket --bucket cloud-copy-test
+```
+
+Finally, run the tests:
+
+```bash
+cargo test --all
+```
+
+Note: the Azure tests expect `*.blob.core.windows.net.localhost` to resolve to
+`127.0.0.1`.
 
 ## ✅ Submitting Pull Requests
 

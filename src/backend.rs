@@ -50,6 +50,16 @@ pub trait StorageBackend {
     /// Gets the block size given the size of a file.
     fn block_size(&self, file_size: u64) -> Result<u64>;
 
+    /// Whether or not the URL is supported by this backend.
+    fn is_supported_url(config: &Config, url: &Url) -> bool;
+
+    /// Rewrites the given URL.
+    ///
+    /// If the URL is using a cloud-specific scheme, the URL is rewritten to a `https` schemed URL.
+    ///
+    /// Otherwise, the given URL is returned as-is.
+    fn rewrite_url(&self, url: Url) -> Result<Url>;
+
     /// Joins segments to a URL to form a new URL.
     fn join_url<'a>(&self, url: Url, segments: impl Iterator<Item = &'a str>) -> Result<Url>;
 

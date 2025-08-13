@@ -41,7 +41,7 @@ use crate::streams::ByteStream;
 use crate::streams::TransferStream;
 
 /// The root domain for Google Cloud Storage.
-pub const GOOGLE_ROOT_DOMAIN: &str = "storage.googleapis.com";
+const GOOGLE_ROOT_DOMAIN: &str = "storage.googleapis.com";
 
 /// The maximum number of parts in an upload.
 const MAX_PARTS: u64 = 10000;
@@ -152,73 +152,6 @@ fn append_authentication_header(
         HeaderValue::try_from(auth).expect("value should be valid"),
     );
     Ok(())
-}
-
-/// Determines if the given URL is a Google Cloud Storage URL.
-pub fn is_gcs_url(url: &Url) -> bool {
-    match url.scheme() {
-        "gs" => true,
-        "https" => {
-            let Some(domain) = url.domain() else {
-                return false;
-            };
-
-            if domain.eq_ignore_ascii_case(GOOGLE_ROOT_DOMAIN) {
-                // Path-style URL of the form http://storage.googleapis.com/<bucket>/<object>
-                // There must be at least two path segments
-                return url
-                    .path_segments()
-                    .map(|mut s| s.nth(1).is_some())
-                    .unwrap_or(false);
-            }
-
-            // Virtual host style URL of the form https://<bucket>.storage.googleapis.com/<object>
-            let Some((bucket, domain)) = domain.split_once('.') else {
-                return false;
-            };
-
-            // There must be at least one path segment
-            !bucket.is_empty()
-                && domain.eq_ignore_ascii_case(GOOGLE_ROOT_DOMAIN)
-                && url
-                    .path_segments()
-                    .map(|mut s| s.next().is_some())
-                    .unwrap_or(false)
-        }
-        _ => false,
-    }
-}
-
-/// Rewrites a Google Cloud Storage URL (gs://) into a HTTPS URL.
-///
-/// If the URL is not `gs` schemed, the given URL is returned as-is.
-pub fn rewrite_url(url: Url) -> Result<Url> {
-    match url.scheme() {
-        "gs" => {
-            let bucket = url.host_str().ok_or(GoogleError::InvalidScheme)?;
-            let path = url.path();
-
-            if url.path() == "/" {
-                return Err(GoogleError::InvalidScheme.into());
-            }
-
-            match (url.query(), url.fragment()) {
-                (None, None) => format!("https://{bucket}.{GOOGLE_ROOT_DOMAIN}{path}"),
-                (None, Some(fragment)) => {
-                    format!("https://{bucket}.{GOOGLE_ROOT_DOMAIN}{path}#{fragment}")
-                }
-                (Some(query), None) => {
-                    format!("https://{bucket}.{GOOGLE_ROOT_DOMAIN}{path}?{query}")
-                }
-                (Some(query), Some(fragment)) => {
-                    format!("https://{bucket}.{GOOGLE_ROOT_DOMAIN}{path}?{query}#{fragment}")
-                }
-            }
-            .parse()
-            .map_err(|_| GoogleError::InvalidScheme.into())
-        }
-        _ => Ok(url),
-    }
 }
 
 /// URL extensions for Google Cloud Storage.
@@ -523,6 +456,69 @@ impl StorageBackend for GoogleStorageBackend {
         Ok(block_size)
     }
 
+    fn is_supported_url(_: &Config, url: &Url) -> bool {
+        match url.scheme() {
+            "gs" => true,
+            "http" | "https" => {
+                let Some(domain) = url.domain() else {
+                    return false;
+                };
+
+                if domain.eq_ignore_ascii_case(GOOGLE_ROOT_DOMAIN) {
+                    // Path-style URL of the form http://storage.googleapis.com/<bucket>/<object>
+                    // There must be at least two path segments
+                    return url
+                        .path_segments()
+                        .map(|mut s| s.nth(1).is_some())
+                        .unwrap_or(false);
+                }
+
+                // Virtual host style URL of the form https://<bucket>.storage.googleapis.com/<object>
+                let Some((bucket, domain)) = domain.split_once('.') else {
+                    return false;
+                };
+
+                // There must be at least one path segment
+                !bucket.is_empty()
+                    && domain.eq_ignore_ascii_case(GOOGLE_ROOT_DOMAIN)
+                    && url
+                        .path_segments()
+                        .map(|mut s| s.next().is_some())
+                        .unwrap_or(false)
+            }
+            _ => false,
+        }
+    }
+
+    fn rewrite_url(&self, url: Url) -> Result<Url> {
+        match url.scheme() {
+            "gs" => {
+                let bucket = url.host_str().ok_or(GoogleError::InvalidScheme)?;
+                let path = url.path();
+
+                if url.path() == "/" {
+                    return Err(GoogleError::InvalidScheme.into());
+                }
+
+                match (url.query(), url.fragment()) {
+                    (None, None) => format!("https://{bucket}.{GOOGLE_ROOT_DOMAIN}{path}"),
+                    (None, Some(fragment)) => {
+                        format!("https://{bucket}.{GOOGLE_ROOT_DOMAIN}{path}#{fragment}")
+                    }
+                    (Some(query), None) => {
+                        format!("https://{bucket}.{GOOGLE_ROOT_DOMAIN}{path}?{query}")
+                    }
+                    (Some(query), Some(fragment)) => {
+                        format!("https://{bucket}.{GOOGLE_ROOT_DOMAIN}{path}?{query}#{fragment}")
+                    }
+                }
+                .parse()
+                .map_err(|_| GoogleError::InvalidScheme.into())
+            }
+            _ => Ok(url),
+        }
+    }
+
     fn join_url<'a>(&self, mut url: Url, segments: impl Iterator<Item = &'a str>) -> Result<Url> {
         // Append on the segments
         {
@@ -536,8 +532,9 @@ impl StorageBackend for GoogleStorageBackend {
 
     async fn head(&self, url: Url) -> Result<Response> {
         debug_assert!(
-            is_gcs_url(&url) && url.scheme() == "https",
-            "expected Google Cloud Storage HTTPS URL"
+            Self::is_supported_url(&self.config, &url),
+            "{url} is not a supported GCS URL",
+            url = url.as_str()
         );
 
         debug!("sending HEAD request for `{url}`", url = url.display());
@@ -568,8 +565,9 @@ impl StorageBackend for GoogleStorageBackend {
 
     async fn get(&self, url: Url) -> Result<Response> {
         debug_assert!(
-            is_gcs_url(&url) && url.scheme() == "https",
-            "expected Google Cloud Storage HTTPS URL"
+            Self::is_supported_url(&self.config, &url),
+            "{url} is not a supported GCS URL",
+            url = url.as_str()
         );
 
         debug!("sending GET request for `{url}`", url = url.display());
@@ -600,8 +598,9 @@ impl StorageBackend for GoogleStorageBackend {
 
     async fn get_range(&self, url: Url, etag: &str, range: Range<u64>) -> Result<Response> {
         debug_assert!(
-            is_gcs_url(&url) && url.scheme() == "https",
-            "expected Google Cloud Storage HTTPS URL"
+            Self::is_supported_url(&self.config, &url),
+            "{url} is not a supported GCS URL",
+            url = url.as_str()
         );
 
         debug!(
@@ -658,8 +657,9 @@ impl StorageBackend for GoogleStorageBackend {
         // See: https://cloud.google.com/storage/docs/xml-api/get-bucket-list
 
         debug_assert!(
-            is_gcs_url(&url) && url.scheme() == "https",
-            "expected Google Cloud Storage HTTPS URL"
+            Self::is_supported_url(&self.config, &url),
+            "{url} is not a supported GCS URL",
+            url = url.as_str()
         );
 
         debug!("walking `{url}` as a directory", url = url.display());
@@ -754,8 +754,9 @@ impl StorageBackend for GoogleStorageBackend {
         // See: https://cloud.google.com/storage/docs/xml-api/post-object-multipart
 
         debug_assert!(
-            is_gcs_url(&url) && url.scheme() == "https",
-            "expected Google Cloud Storage HTTPS URL"
+            Self::is_supported_url(&self.config, &url),
+            "{url} is not a supported GCS URL",
+            url = url.as_str()
         );
 
         debug!("sending POST request for `{url}`", url = url.display());
@@ -764,6 +765,10 @@ impl StorageBackend for GoogleStorageBackend {
         create.query_pairs_mut().append_key_only("uploads");
 
         let date = Utc::now();
+
+        create.set_scheme("http").unwrap();
+        create.set_ip_host("127.0.0.1".parse().unwrap()).unwrap();
+        create.set_port(Some(9000)).unwrap();
 
         let mut request = self
             .client

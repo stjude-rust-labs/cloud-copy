@@ -108,6 +108,14 @@ impl StorageBackend for GenericStorageBackend {
         Ok(4 * 1024 * 1024)
     }
 
+    fn is_supported_url(_: &Config, _: &Url) -> bool {
+        true
+    }
+
+    fn rewrite_url(&self, url: Url) -> Result<Url> {
+        Ok(url)
+    }
+
     fn join_url<'a>(&self, mut url: Url, segments: impl Iterator<Item = &'a str>) -> Result<Url> {
         // Append on the segments
         {

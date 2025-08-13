@@ -30,6 +30,20 @@ pub struct GoogleAuthConfig {
     pub secret: SecretString,
 }
 
+/// Represents configuration for Azure Storage.
+#[derive(Debug, Clone, Default, Deserialize)]
+pub struct AzureConfig {
+    /// Enables support for [Azurite](https://learn.microsoft.com/en-us/azure/storage/common/storage-use-azurite).
+    ///
+    /// Requests for Azurite are expected to use host suffix `blob.core.windows.net.localhost`.
+    ///
+    /// Any URLs that use the `az` scheme will be rewritten to use that suffix.
+    ///
+    /// This setting is primarily intended for local testing.
+    #[serde(default)]
+    pub use_azurite: bool,
+}
+
 /// Represents configuration for AWS S3.
 #[derive(Debug, Clone, Default, Deserialize)]
 pub struct S3Config {
@@ -43,6 +57,15 @@ pub struct S3Config {
     /// If `None`, no authentication header will be put on requests.
     #[serde(default)]
     pub auth: Option<S3AuthConfig>,
+    /// Enables support for [localstack](https://github.com/localstack/localstack).
+    ///
+    /// The domain suffix is expected to be `localhost.localstack.cloud`.
+    ///
+    /// Any URLs that use the `s3` scheme will be rewritten to use that suffix.
+    ///
+    /// This setting is primarily intended for local testing.
+    #[serde(default)]
+    pub use_localstack: bool,
 }
 
 /// Represents configuration for Google Cloud Storage.
@@ -73,6 +96,9 @@ pub struct Config {
     /// Defaults to `5`.
     #[serde(default)]
     pub retries: Option<usize>,
+    /// The Azure Storage configuration.
+    #[serde(default)]
+    pub azure: AzureConfig,
     /// The AWS S3 configuration.
     #[serde(default)]
     pub s3: S3Config,
