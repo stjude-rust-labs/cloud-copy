@@ -51,7 +51,7 @@ pub trait StorageBackend {
     fn block_size(&self, file_size: u64) -> Result<u64>;
 
     /// Whether or not the URL is supported by this backend.
-    fn is_supported_url(url: &Url) -> bool;
+    fn is_supported_url(config: &Config, url: &Url) -> bool;
 
     /// Rewrites the given URL.
     ///

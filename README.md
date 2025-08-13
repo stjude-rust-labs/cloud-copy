@@ -166,7 +166,8 @@ Finally, run the tests:
 cargo test --all
 ```
 
-Note: the Azure tests expect `blob.localhost` to resolve to `127.0.0.1`.
+Note: the Azure tests expect `*.blob.core.windows.net.localhost` to resolve to
+`127.0.0.1`.
 
 ## ✅ Submitting Pull Requests
 

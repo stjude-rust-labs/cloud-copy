@@ -8,6 +8,7 @@ use anyhow::Context;
 use anyhow::Result;
 use anyhow::bail;
 use cloud_copy::Alphanumeric;
+use cloud_copy::AzureConfig;
 use cloud_copy::Config;
 use cloud_copy::S3AuthConfig;
 use cloud_copy::S3Config;
@@ -149,23 +150,25 @@ fn urls(test: &str) -> Vec<Url> {
     vec![
         // S3 URLs
         format!("s3://{TEST_BUCKET_NAME}/1/{test}").parse().unwrap(),
-        format!("https://s3.us-east-1.amazonaws.com/{TEST_BUCKET_NAME}/2/{test}")
+        format!("http://s3.us-east-1.localhost.localstack.cloud:4566/{TEST_BUCKET_NAME}/2/{test}")
             .parse()
             .unwrap(),
-        format!("https://{TEST_BUCKET_NAME}.s3.us-east-1.amazonaws.com/3/{test}")
+        format!("http://{TEST_BUCKET_NAME}.s3.us-east-1.localhost.localstack.cloud:4566/3/{test}")
             .parse()
             .unwrap(),
 
         // Azure URLs
         // These URLs use a SAS token that expires in 2050 and the default credentials of Azurite
         format!("az://devstoreaccount1/{TEST_BUCKET_NAME}/1/{test}?sv=2018-03-28&spr=https%2Chttp&st=2025-08-11T15%3A49%3A59Z&se=2050-08-11T15%3A49%3A00Z&sr=c&sp=rcwl&sig=0UK1EckCkj0k8Xi7s7yjB5QpjZa%2FVUmtd906SWAtO%2FM%3D").parse().unwrap(),
-        format!("https://devstoreaccount1.blob.core.windows.net/{TEST_BUCKET_NAME}/2/{test}?sv=2018-03-28&spr=https%2Chttp&st=2025-08-11T15%3A49%3A59Z&se=2050-08-11T15%3A49%3A00Z&sr=c&sp=rcwl&sig=0UK1EckCkj0k8Xi7s7yjB5QpjZa%2FVUmtd906SWAtO%2FM%3D").parse().unwrap(),
+        format!("http://devstoreaccount1.blob.core.windows.net.localhost:10000/{TEST_BUCKET_NAME}/2/{test}?sv=2018-03-28&spr=https%2Chttp&st=2025-08-11T15%3A49%3A59Z&se=2050-08-11T15%3A49%3A00Z&sr=c&sp=rcwl&sig=0UK1EckCkj0k8Xi7s7yjB5QpjZa%2FVUmtd906SWAtO%2FM%3D").parse().unwrap(),
     ]
 }
 
 fn config() -> Config {
     Config {
+        azure: AzureConfig { use_azurite: true },
         s3: S3Config {
+            use_localstack: true,
             auth: Some(S3AuthConfig {
                 access_key_id: "test".to_string(),
                 secret_access_key: "test".into(),
@@ -224,14 +227,6 @@ async fn roundtrip_file(test: &str, size: usize) -> Result<()> {
     Ok(())
 }
 
-/// Sets the environment variables for using the emulators.
-fn set_test_env() {
-    unsafe {
-        std::env::set_var("TEST_LOCALSTACK", "1");
-        std::env::set_var("TEST_AZURITE", "1");
-    }
-}
-
 /// A test to download a generic URL.
 #[tokio::test]
 async fn copy_generic_url() -> Result<()> {
@@ -260,8 +255,6 @@ async fn copy_generic_url() -> Result<()> {
 /// A test to roundtrip an empty file.
 #[tokio::test]
 async fn roundtrip_empty_file() -> Result<()> {
-    set_test_env();
-
     let test = format!("{random}", random = Alphanumeric::new(10));
     roundtrip_file(&test, 0).await
 }
@@ -269,8 +262,6 @@ async fn roundtrip_empty_file() -> Result<()> {
 /// A test to roundtrip a small (1 byte to 10 MiB) file.
 #[tokio::test]
 async fn roundtrip_small_file() -> Result<()> {
-    set_test_env();
-
     let test = format!("{random}", random = Alphanumeric::new(10));
     roundtrip_file(&test, rand::rng().random_range(1..10 * ONE_MEBIBYTE)).await
 }
@@ -278,8 +269,6 @@ async fn roundtrip_small_file() -> Result<()> {
 /// A test to roundtrip a medium (10 MiB to 50 MiB) file.
 #[tokio::test]
 async fn roundtrip_medium_file() -> Result<()> {
-    set_test_env();
-
     let test = format!("{random}", random = Alphanumeric::new(10));
     roundtrip_file(
         &test,
@@ -291,8 +280,6 @@ async fn roundtrip_medium_file() -> Result<()> {
 /// A test to roundtrip a large (50 MiB to 100 MiB) file.
 #[tokio::test]
 async fn roundtrip_large_file() -> Result<()> {
-    set_test_env();
-
     let test = format!("{random}", random = Alphanumeric::new(10));
     roundtrip_file(
         &test,
@@ -304,8 +291,6 @@ async fn roundtrip_large_file() -> Result<()> {
 /// A test to roundtrip a directory.
 #[tokio::test]
 async fn roundtrip_directory() -> Result<()> {
-    set_test_env();
-
     let test = format!("{random}", random = Alphanumeric::new(10));
 
     let source = tempdir().context("failed to create temporary directory")?;

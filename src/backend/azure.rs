@@ -37,7 +37,7 @@ use crate::streams::TransferStream;
 const AZURE_BLOB_STORAGE_ROOT_DOMAIN: &str = "blob.core.windows.net";
 
 /// The Azurite root domain suffix.
-const AZURITE_ROOT_DOMAIN: &str = "blob.localhost";
+const AZURITE_ROOT_DOMAIN: &str = "blob.core.windows.net.localhost";
 
 /// The default block size in bytes (4 MiB).
 const DEFAULT_BLOCK_SIZE: u64 = 4 * ONE_MEBIBYTE;
@@ -68,9 +68,6 @@ const AZURE_BLOB_TYPE: &str = "BlockBlob";
 
 /// The name of the root container.
 const AZURE_ROOT_CONTAINER: &str = "$root";
-
-/// The environment variable to test with Azurite.
-const TEST_AZURITE: &str = "TEST_AZURITE";
 
 /// Represents an Azure-specific copy operation error.
 #[derive(Debug, thiserror::Error)]
@@ -367,7 +364,7 @@ impl StorageBackend for AzureBlobStorageBackend {
         Ok(block_size)
     }
 
-    fn is_supported_url(url: &Url) -> bool {
+    fn is_supported_url(config: &Config, url: &Url) -> bool {
         match url.scheme() {
             "az" => true,
             "http" | "https" => {
@@ -380,16 +377,15 @@ impl StorageBackend for AzureBlobStorageBackend {
                     return false;
                 };
 
-                let azurite = std::env::var(TEST_AZURITE).is_ok();
                 domain.eq_ignore_ascii_case(AZURE_BLOB_STORAGE_ROOT_DOMAIN)
-                    | (azurite && domain.eq_ignore_ascii_case(AZURITE_ROOT_DOMAIN))
+                    | (config.azure.use_azurite && domain.eq_ignore_ascii_case(AZURITE_ROOT_DOMAIN))
             }
             _ => false,
         }
     }
 
     fn rewrite_url(&self, url: Url) -> Result<Url> {
-        let mut url = match url.scheme() {
+        match url.scheme() {
             "az" => {
                 let account = url.host_str().ok_or(AzureError::InvalidScheme)?;
 
@@ -397,46 +393,38 @@ impl StorageBackend for AzureBlobStorageBackend {
                     return Err(AzureError::InvalidScheme.into());
                 }
 
+                let (scheme, root, port) = if self.config.azure.use_azurite {
+                    ("http", AZURITE_ROOT_DOMAIN, ":10000")
+                } else {
+                    ("https", AZURE_BLOB_STORAGE_ROOT_DOMAIN, "")
+                };
+
                 match (url.query(), url.fragment()) {
-                    (None, None) => format!(
-                        "https://{account}.{AZURE_BLOB_STORAGE_ROOT_DOMAIN}{path}",
-                        path = url.path()
-                    ),
+                    (None, None) => {
+                        format!("{scheme}://{account}.{root}{port}{path}", path = url.path())
+                    }
                     (None, Some(fragment)) => {
                         format!(
-                            "https://{account}.{AZURE_BLOB_STORAGE_ROOT_DOMAIN}{path}#{fragment}",
+                            "{scheme}://{account}.{root}{port}{path}#{fragment}",
                             path = url.path()
                         )
                     }
                     (Some(query), None) => format!(
-                        "https://{account}.{AZURE_BLOB_STORAGE_ROOT_DOMAIN}{path}?{query}",
+                        "{scheme}://{account}.{root}{port}{path}?{query}",
                         path = url.path()
                     ),
                     (Some(query), Some(fragment)) => {
                         format!(
-                            "https://{account}.{AZURE_BLOB_STORAGE_ROOT_DOMAIN}{path}?{query}#{fragment}",
+                            "{scheme}://{account}.{root}{port}{path}?{query}#{fragment}",
                             path = url.path()
                         )
                     }
                 }
                 .parse()
-                .map_err(|_| Error::from(AzureError::InvalidScheme))?
+                .map_err(|_| AzureError::InvalidScheme.into())
             }
-            _ => url,
-        };
-
-        if url.scheme() == "https" && std::env::var(TEST_AZURITE).is_ok() {
-            url.set_scheme("http").unwrap();
-            url.set_host(Some(
-                &url.host_str()
-                    .unwrap()
-                    .replace(AZURE_BLOB_STORAGE_ROOT_DOMAIN, AZURITE_ROOT_DOMAIN),
-            ))
-            .unwrap();
-            url.set_port(Some(10000)).unwrap();
+            _ => Ok(url),
         }
-
-        Ok(url)
     }
 
     fn join_url<'a>(&self, mut url: Url, segments: impl Iterator<Item = &'a str>) -> Result<Url> {
@@ -464,7 +452,7 @@ impl StorageBackend for AzureBlobStorageBackend {
 
     async fn head(&self, url: Url) -> Result<Response> {
         debug_assert!(
-            Self::is_supported_url(&url),
+            Self::is_supported_url(&self.config, &url),
             "{url} is not a supported Azure URL",
             url = url.as_str()
         );
@@ -489,7 +477,7 @@ impl StorageBackend for AzureBlobStorageBackend {
 
     async fn get(&self, url: Url) -> Result<Response> {
         debug_assert!(
-            Self::is_supported_url(&url),
+            Self::is_supported_url(&self.config, &url),
             "{url} is not a supported Azure URL",
             url = url.as_str()
         );
@@ -514,7 +502,7 @@ impl StorageBackend for AzureBlobStorageBackend {
 
     async fn get_range(&self, url: Url, etag: &str, range: Range<u64>) -> Result<Response> {
         debug_assert!(
-            Self::is_supported_url(&url),
+            Self::is_supported_url(&self.config, &url),
             "{url} is not a supported Azure URL",
             url = url.as_str()
         );
@@ -562,7 +550,7 @@ impl StorageBackend for AzureBlobStorageBackend {
 
     async fn walk(&self, url: Url) -> Result<Vec<String>> {
         debug_assert!(
-            Self::is_supported_url(&url),
+            Self::is_supported_url(&self.config, &url),
             "{url} is not a supported Azure URL",
             url = url.as_str()
         );
@@ -693,7 +681,7 @@ impl StorageBackend for AzureBlobStorageBackend {
 
     async fn new_upload(&self, url: Url) -> Result<Self::Upload> {
         debug_assert!(
-            Self::is_supported_url(&url),
+            Self::is_supported_url(&self.config, &url),
             "{url} is not a supported Azure URL",
             url = url.as_str()
         );

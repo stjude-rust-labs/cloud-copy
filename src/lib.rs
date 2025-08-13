@@ -449,14 +449,14 @@ pub async fn copy(
                     .map_err(Into::into);
             }
 
-            if AzureBlobStorageBackend::is_supported_url(&destination) {
+            if AzureBlobStorageBackend::is_supported_url(&config, &destination) {
                 let transfer =
                     FileTransfer::new(AzureBlobStorageBackend::new(config, events), cancel);
                 transfer.upload(source, destination).await
-            } else if S3StorageBackend::is_supported_url(&destination) {
+            } else if S3StorageBackend::is_supported_url(&config, &destination) {
                 let transfer = FileTransfer::new(S3StorageBackend::new(config, events), cancel);
                 transfer.upload(source, destination).await
-            } else if GoogleStorageBackend::is_supported_url(&destination) {
+            } else if GoogleStorageBackend::is_supported_url(&config, &destination) {
                 let transfer = FileTransfer::new(GoogleStorageBackend::new(config, events), cancel);
                 transfer.upload(source, destination).await
             } else {
@@ -476,14 +476,14 @@ pub async fn copy(
                 return Err(Error::DestinationExists(destination.to_path_buf()));
             }
 
-            if AzureBlobStorageBackend::is_supported_url(&source) {
+            if AzureBlobStorageBackend::is_supported_url(&config, &source) {
                 let transfer =
                     FileTransfer::new(AzureBlobStorageBackend::new(config, events), cancel);
                 transfer.download(source, destination).await
-            } else if S3StorageBackend::is_supported_url(&source) {
+            } else if S3StorageBackend::is_supported_url(&config, &source) {
                 let transfer = FileTransfer::new(S3StorageBackend::new(config, events), cancel);
                 transfer.download(source, destination).await
-            } else if GoogleStorageBackend::is_supported_url(&source) {
+            } else if GoogleStorageBackend::is_supported_url(&config, &source) {
                 let transfer = FileTransfer::new(GoogleStorageBackend::new(config, events), cancel);
                 transfer.download(source, destination).await
             } else {

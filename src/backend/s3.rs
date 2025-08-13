@@ -66,9 +66,6 @@ const AWS_DATE_HEADER: &str = "x-amz-date";
 /// The AWS content SHA256 header name.
 const AWS_CONTENT_SHA256_HEADER: &str = "x-amz-content-sha256";
 
-/// The environment variable to test with localstack.
-const TEST_LOCALSTACK: &str = "TEST_LOCALSTACK";
-
 /// Represents a S3-specific copy operation error.
 #[derive(Debug, thiserror::Error)]
 pub enum S3Error {
@@ -526,7 +523,7 @@ impl StorageBackend for S3StorageBackend {
         Ok(block_size)
     }
 
-    fn is_supported_url(url: &Url) -> bool {
+    fn is_supported_url(config: &Config, url: &Url) -> bool {
         match url.scheme() {
             "s3" => true,
             "http" | "https" => {
@@ -534,7 +531,6 @@ impl StorageBackend for S3StorageBackend {
                     return false;
                 };
 
-                let localstack = std::env::var(TEST_LOCALSTACK).is_ok();
                 if domain.starts_with("s3.") || domain.starts_with("S3.") {
                     // Path-style URL of the form https://s3.<region>.amazonaws.com/<bucket>/<path>
                     let domain = &domain[3..];
@@ -545,7 +541,8 @@ impl StorageBackend for S3StorageBackend {
                     // There must be at least two path segments
                     !region.is_empty()
                         && (domain.eq_ignore_ascii_case(AWS_ROOT_DOMAIN)
-                            || (localstack && domain.eq_ignore_ascii_case(LOCALSTACK_ROOT_DOMAIN)))
+                            || (config.s3.use_localstack
+                                && domain.eq_ignore_ascii_case(LOCALSTACK_ROOT_DOMAIN)))
                         && url
                             .path_segments()
                             .map(|mut s| s.nth(1).is_some())
@@ -560,7 +557,7 @@ impl StorageBackend for S3StorageBackend {
                                 && !region.is_empty()
                                 && service.eq_ignore_ascii_case("s3")
                                 && (domain.eq_ignore_ascii_case(AWS_ROOT_DOMAIN)
-                                    || (localstack
+                                    || (config.s3.use_localstack
                                         && domain.eq_ignore_ascii_case(LOCALSTACK_ROOT_DOMAIN)))
                                 && url
                                     .path_segments()
@@ -576,7 +573,7 @@ impl StorageBackend for S3StorageBackend {
     }
 
     fn rewrite_url(&self, url: Url) -> Result<Url> {
-        let mut url = match url.scheme() {
+        match url.scheme() {
             "s3" => {
                 let region = self.config.s3.region.as_deref().unwrap_or(DEFAULT_REGION);
                 let bucket = url.host_str().ok_or(S3Error::InvalidScheme)?;
@@ -586,38 +583,31 @@ impl StorageBackend for S3StorageBackend {
                     return Err(S3Error::InvalidScheme.into());
                 }
 
+                let (scheme, root, port) = if self.config.azure.use_azurite {
+                    ("http", LOCALSTACK_ROOT_DOMAIN, ":4566")
+                } else {
+                    ("https", AWS_ROOT_DOMAIN, "")
+                };
+
                 match (url.query(), url.fragment()) {
-                    (None, None) => format!("https://{bucket}.s3.{region}.{AWS_ROOT_DOMAIN}{path}"),
+                    (None, None) => format!("{scheme}://{bucket}.s3.{region}.{root}{port}{path}"),
                     (None, Some(fragment)) => {
-                        format!("https://{bucket}.s3.{region}.{AWS_ROOT_DOMAIN}{path}#{fragment}")
+                        format!("{scheme}://{bucket}.s3.{region}.{root}{port}{path}#{fragment}")
                     }
                     (Some(query), None) => {
-                        format!("https://{bucket}.s3.{region}.{AWS_ROOT_DOMAIN}{path}?{query}")
+                        format!("{scheme}://{bucket}.s3.{region}.{root}{port}{path}?{query}")
                     }
                     (Some(query), Some(fragment)) => {
                         format!(
-                            "https://{bucket}.s3.{region}.{AWS_ROOT_DOMAIN}{path}?{query}#{fragment}"
+                            "{scheme}://{bucket}.s3.{region}.{root}{port}{path}?{query}#{fragment}"
                         )
                     }
                 }
                 .parse()
-                .map_err(|_| Error::from(S3Error::InvalidScheme))?
+                .map_err(|_| S3Error::InvalidScheme.into())
             }
-            _ => url,
-        };
-
-        if url.scheme() == "https" && std::env::var(TEST_LOCALSTACK).is_ok() {
-            url.set_scheme("http").unwrap();
-            url.set_host(Some(
-                &url.host_str()
-                    .unwrap()
-                    .replace(AWS_ROOT_DOMAIN, LOCALSTACK_ROOT_DOMAIN),
-            ))
-            .unwrap();
-            url.set_port(Some(4566)).unwrap();
+            _ => Ok(url),
         }
-
-        Ok(url)
     }
 
     fn join_url<'a>(&self, mut url: Url, segments: impl Iterator<Item = &'a str>) -> Result<Url> {
@@ -633,7 +623,7 @@ impl StorageBackend for S3StorageBackend {
 
     async fn head(&self, url: Url) -> Result<Response> {
         debug_assert!(
-            Self::is_supported_url(&url),
+            Self::is_supported_url(&self.config, &url),
             "{url} is not a supported S3 URL",
             url = url.as_str()
         );
@@ -663,7 +653,7 @@ impl StorageBackend for S3StorageBackend {
 
     async fn get(&self, url: Url) -> Result<Response> {
         debug_assert!(
-            Self::is_supported_url(&url),
+            Self::is_supported_url(&self.config, &url),
             "{url} is not a supported S3 URL",
             url = url.as_str()
         );
@@ -693,7 +683,7 @@ impl StorageBackend for S3StorageBackend {
 
     async fn get_range(&self, url: Url, etag: &str, range: Range<u64>) -> Result<Response> {
         debug_assert!(
-            Self::is_supported_url(&url),
+            Self::is_supported_url(&self.config, &url),
             "{url} is not a supported S3 URL",
             url = url.as_str()
         );
@@ -749,29 +739,27 @@ impl StorageBackend for S3StorageBackend {
         // See: https://docs.aws.amazon.com/AmazonS3/latest/API/API_ListObjectsV2.html
 
         debug_assert!(
-            Self::is_supported_url(&url),
+            Self::is_supported_url(&self.config, &url),
             "{url} is not a supported S3 URL",
             url = url.as_str()
         );
 
         debug!("walking `{url}` as a directory", url = url.display());
 
-        let region = url.region();
         let (bucket, path) = url.bucket_and_path();
 
         // The prefix should end with `/` to signify a directory.
         let mut prefix = path.strip_prefix('/').unwrap_or(path).to_string();
         prefix.push('/');
 
-        let root_domain = if std::env::var(TEST_LOCALSTACK).is_ok() {
-            LOCALSTACK_ROOT_DOMAIN
-        } else {
-            AWS_ROOT_DOMAIN
-        };
-
         // Format the request to always use the virtual-host style URL
-        url.set_host(Some(&format!("{bucket}.s3.{region}.{root_domain}")))
-            .map_err(|_| S3Error::InvalidBucketName)?;
+        let domain = url.domain().expect("URL should have domain");
+        if domain.starts_with("s3") || domain.starts_with("S3") {
+            // Set the host to a virtual host
+            url.set_host(Some(&format!("{bucket}.{domain}")))
+                .map_err(|_| S3Error::InvalidBucketName)?;
+        }
+
         url.set_path("/");
 
         {
@@ -850,7 +838,7 @@ impl StorageBackend for S3StorageBackend {
         // See: https://docs.aws.amazon.com/AmazonS3/latest/API/API_CreateMultipartUpload.html
 
         debug_assert!(
-            Self::is_supported_url(&url),
+            Self::is_supported_url(&self.config, &url),
             "{url} is not a supported S3 URL",
             url = url.as_str()
         );

@@ -456,7 +456,7 @@ impl StorageBackend for GoogleStorageBackend {
         Ok(block_size)
     }
 
-    fn is_supported_url(url: &Url) -> bool {
+    fn is_supported_url(_: &Config, url: &Url) -> bool {
         match url.scheme() {
             "gs" => true,
             "http" | "https" => {
@@ -532,7 +532,7 @@ impl StorageBackend for GoogleStorageBackend {
 
     async fn head(&self, url: Url) -> Result<Response> {
         debug_assert!(
-            Self::is_supported_url(&url),
+            Self::is_supported_url(&self.config, &url),
             "{url} is not a supported GCS URL",
             url = url.as_str()
         );
@@ -565,7 +565,7 @@ impl StorageBackend for GoogleStorageBackend {
 
     async fn get(&self, url: Url) -> Result<Response> {
         debug_assert!(
-            Self::is_supported_url(&url),
+            Self::is_supported_url(&self.config, &url),
             "{url} is not a supported GCS URL",
             url = url.as_str()
         );
@@ -598,7 +598,7 @@ impl StorageBackend for GoogleStorageBackend {
 
     async fn get_range(&self, url: Url, etag: &str, range: Range<u64>) -> Result<Response> {
         debug_assert!(
-            Self::is_supported_url(&url),
+            Self::is_supported_url(&self.config, &url),
             "{url} is not a supported GCS URL",
             url = url.as_str()
         );
@@ -657,7 +657,7 @@ impl StorageBackend for GoogleStorageBackend {
         // See: https://cloud.google.com/storage/docs/xml-api/get-bucket-list
 
         debug_assert!(
-            Self::is_supported_url(&url),
+            Self::is_supported_url(&self.config, &url),
             "{url} is not a supported GCS URL",
             url = url.as_str()
         );
@@ -754,7 +754,7 @@ impl StorageBackend for GoogleStorageBackend {
         // See: https://cloud.google.com/storage/docs/xml-api/post-object-multipart
 
         debug_assert!(
-            Self::is_supported_url(&url),
+            Self::is_supported_url(&self.config, &url),
             "{url} is not a supported GCS URL",
             url = url.as_str()
         );

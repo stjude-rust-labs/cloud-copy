@@ -108,7 +108,7 @@ impl StorageBackend for GenericStorageBackend {
         Ok(4 * 1024 * 1024)
     }
 
-    fn is_supported_url(_: &Url) -> bool {
+    fn is_supported_url(_: &Config, _: &Url) -> bool {
         true
     }
 
