@@ -1,10 +1,16 @@
 //! Cloud storage copy utility.
 
+use std::fmt;
 use std::io::IsTerminal;
 use std::io::stderr;
+use std::path::PathBuf;
 
 use anyhow::Context;
 use anyhow::Result;
+use byte_unit::Byte;
+use byte_unit::UnitType;
+use chrono::TimeDelta;
+use chrono::Utc;
 use clap::Parser;
 use clap_verbosity_flag::Verbosity;
 use clap_verbosity_flag::WarnLevel;
@@ -26,6 +32,61 @@ use tracing_indicatif::IndicatifLayer;
 use tracing_subscriber::EnvFilter;
 use tracing_subscriber::layer::SubscriberExt;
 
+/// Display implementation for time deltas.
+struct DisplayTimeDelta(TimeDelta);
+
+impl fmt::Display for DisplayTimeDelta {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        if self.0.num_seconds() == 0 {
+            return write!(f, "0 seconds");
+        }
+
+        let days = self.0.num_days();
+        let hours = self.0.num_hours() - (days * 24);
+        let minutes = self.0.num_minutes() - (days * 24 * 60) - (hours * 60);
+        let seconds =
+            self.0.num_seconds() - -(days * 24 * 60 * 60) - (hours * 60 * 60) - (minutes * 60);
+
+        if days > 0 {
+            write!(f, "{days} day{s}", s = if days == 1 { "" } else { "s" })?;
+        }
+
+        if hours > 0 {
+            if days > 0 {
+                write!(f, ", ")?;
+            }
+
+            write!(f, "{hours} hour{s}", s = if hours == 1 { "" } else { "s" })?;
+        }
+
+        if minutes > 0 {
+            if days > 0 || hours > 0 {
+                write!(f, ", ")?;
+            }
+
+            write!(
+                f,
+                "{minutes} minute{s}",
+                s = if minutes == 1 { "" } else { "s" }
+            )?;
+        }
+
+        if seconds > 0 {
+            if days > 0 || hours > 0 || minutes > 0 {
+                write!(f, ", ")?;
+            }
+
+            write!(
+                f,
+                "{seconds} second{s}",
+                s = if seconds == 1 { "" } else { "s" }
+            )?;
+        }
+
+        Ok(())
+    }
+}
+
 #[derive(Parser, Debug)]
 struct Args {
     /// The source location to copy from.
@@ -35,6 +96,10 @@ struct Args {
     /// The destination location to copy to.
     #[clap(value_name = "DESTINATION")]
     destination: String,
+
+    /// The cache directory to use for downloads.
+    #[clap(long, value_name = "DIR")]
+    cache_dir: Option<PathBuf>,
 
     /// The block size to use for file transfers; the default block size depends
     /// on the cloud service.
@@ -109,6 +174,7 @@ impl Args {
         };
 
         let config = Config {
+            cache_dir: self.cache_dir,
             block_size: self.block_size,
             parallelism: self.parallelism,
             retries: self.retries,
@@ -156,18 +222,14 @@ async fn run(cancel: CancellationToken) -> Result<()> {
     }
 
     // Only handle transfer events if for a terminal to display the progress
-    let (handler, events_tx) = if std::io::stderr().is_terminal() {
-        let (events_tx, events_rx) = broadcast::channel(1000);
-        let cancel = cancel.clone();
-        let handler = tokio::spawn(async move { handle_events(events_rx, cancel).await });
-        (Some(handler), Some(events_tx))
-    } else {
-        (None, None)
-    };
+    let (events_tx, events_rx) = broadcast::channel(1000);
+    let c = cancel.clone();
+    let handler = tokio::spawn(async move { handle_events(events_rx, c).await });
+
+    let start = Utc::now();
 
     let (config, source, destination) = args.into_parts();
-
-    let result = copy(config, &source, &destination, cancel, events_tx)
+    let result = copy(config, &source, &destination, cancel, Some(events_tx))
         .await
         .with_context(|| {
             format!(
@@ -177,8 +239,36 @@ async fn run(cancel: CancellationToken) -> Result<()> {
             )
         });
 
-    if let Some(handler) = handler {
-        handler.await.expect("failed to join events handler");
+    let end = Utc::now();
+
+    let stats = handler.await.expect("failed to join events handler");
+
+    // Print the statistics upon success
+    if result.is_ok() {
+        let delta = end - start;
+        let seconds = delta.num_seconds();
+
+        println!(
+            "{files} file{s} copied with a total of {bytes:#} transferred in {time} ({speed})",
+            files = stats.files.to_string().cyan(),
+            s = if stats.files == 1 { "" } else { "s" },
+            bytes = format!(
+                "{:#.3}",
+                Byte::from_u64(stats.bytes).get_appropriate_unit(UnitType::Binary)
+            )
+            .cyan(),
+            time = DisplayTimeDelta(delta).to_string().cyan(),
+            speed = format!(
+                "{bytes:#.3}/s",
+                bytes = if seconds == 0 || stats.bytes < 60 {
+                    Byte::from_u64(stats.bytes)
+                } else {
+                    Byte::from_u64(stats.bytes / seconds as u64)
+                }
+                .get_appropriate_unit(UnitType::Binary)
+            )
+            .cyan()
+        );
     }
 
     result

@@ -21,11 +21,16 @@ use std::path::Path;
 use std::path::PathBuf;
 use std::time::Duration;
 
+use http_cache_stream_reqwest::Cache;
+use http_cache_stream_reqwest::storage::DefaultCacheStorage;
 use reqwest::Client;
 use reqwest::StatusCode;
+use reqwest_middleware::ClientBuilder;
+use reqwest_middleware::ClientWithMiddleware;
 use tokio::sync::broadcast;
 use tokio_retry2::RetryError;
 use tokio_util::sync::CancellationToken;
+use tracing::info;
 use tracing::warn;
 use url::Url;
 
@@ -51,7 +56,11 @@ pub use config::*;
 pub use generator::*;
 
 /// The utility user agent.
-const USER_AGENT: &str = concat!("cloud-copy v", env!("CARGO_PKG_VERSION"));
+const USER_AGENT: &str = concat!(
+    "cloud-copy/",
+    env!("CARGO_PKG_VERSION"),
+    " (https://github.com/stjude-rust-labs/cloud-copy)"
+);
 
 /// Represents one mebibyte in bytes.
 const ONE_MEBIBYTE: u64 = 1024 * 1024;
@@ -179,17 +188,30 @@ impl UrlExt for Url {
 }
 
 /// Constructs a new HTTP client with default options.
-fn new_http_client() -> Client {
+fn new_http_client(config: &Config) -> ClientWithMiddleware {
     /// The timeout for the connecting phase of the client.
     const DEFAULT_CONNECT_TIMEOUT: Duration = Duration::from_secs(60);
     /// The timeout for a read of the client.
     const DEFAULT_READ_TIMEOUT: Duration = Duration::from_secs(60);
 
-    Client::builder()
-        .connect_timeout(DEFAULT_CONNECT_TIMEOUT)
-        .read_timeout(DEFAULT_READ_TIMEOUT)
-        .build()
-        .expect("failed to build HTTP client")
+    let mut builder = ClientBuilder::new(
+        Client::builder()
+            .connect_timeout(DEFAULT_CONNECT_TIMEOUT)
+            .read_timeout(DEFAULT_READ_TIMEOUT)
+            .build()
+            .expect("failed to build HTTP client"),
+    );
+
+    if let Some(cache_dir) = &config.cache_dir {
+        info!(
+            "using HTTP download cache directory `{dir}`",
+            dir = cache_dir.display()
+        );
+
+        builder = builder.with(Cache::new(DefaultCacheStorage::new(cache_dir)));
+    }
+
+    builder.build()
 }
 
 /// Helper for displaying a message in `Error`.
@@ -281,6 +303,12 @@ pub enum Error {
         /// This may be the contents of the entire response body.
         message: String,
     },
+    /// Server responded with an unexpected `content-range` header.
+    #[error(
+        "server responded with a `content-range` header that does not start at the requested \
+         offset"
+    )]
+    UnexpectedContentRangeStart,
     /// An Azure error occurred.
     #[error(transparent)]
     Azure(#[from] AzureError),
@@ -299,6 +327,9 @@ pub enum Error {
     /// A reqwest error occurred.
     #[error(transparent)]
     Reqwest(#[from] reqwest::Error),
+    /// A reqwest middleware error occurred.
+    #[error(transparent)]
+    Middleware(#[from] reqwest_middleware::Error),
     /// A temp file persist error occurred.
     #[error(transparent)]
     Temp(#[from] tempfile::PersistError),
@@ -314,7 +345,7 @@ impl Error {
             {
                 RetryError::transient(self)
             }
-            Error::Io(_) | Error::Reqwest(_) => RetryError::transient(self),
+            Error::Io(_) | Error::Reqwest(_) | Error::Middleware(_) => RetryError::transient(self),
             _ => RetryError::permanent(self),
         }
     }
@@ -349,20 +380,19 @@ pub enum TransferEvent {
         block: u64,
         /// The size of the block being transferred.
         ///
-        /// This is `None` when downloading a file of unknown size (single
-        /// block).
+        /// This is `None` when downloading a file of unknown size.
         size: Option<u64>,
     },
-    /// A transfer of a remote file has made progress.
+    /// A transfer of a block has made progress.
     BlockProgress {
         /// The id of the transfer.
         id: u64,
         /// The block number being transferred.
         block: u64,
-        /// The number of bytes transferred in this update.
+        /// The total number of bytes transferred in the block so far.
         transferred: u64,
     },
-    /// A transfer of a remote file has completed.
+    /// A transfer of a block has completed.
     BlockCompleted {
         /// The id of the transfer.
         id: u64,
@@ -508,6 +538,17 @@ pub async fn copy(
     }
 }
 
+/// Represents statistics from transferring files.
+#[cfg(feature = "cli")]
+#[cfg_attr(docsrs, doc(cfg(feature = "cli")))]
+#[derive(Debug, Clone, Copy, Default)]
+pub struct TransferStats {
+    /// The number of files that were transferred.
+    pub files: usize,
+    /// The total number of bytes transferred for all files.
+    pub bytes: u64,
+}
+
 /// Handles events that may occur during a copy operation.
 ///
 /// This is responsible for showing and updating progress bars for files
@@ -519,7 +560,7 @@ pub async fn copy(
 pub async fn handle_events(
     mut events: broadcast::Receiver<TransferEvent>,
     cancel: CancellationToken,
-) {
+) -> TransferStats {
     use std::collections::HashMap;
 
     use tokio::sync::broadcast::error::RecvError;
@@ -546,6 +587,7 @@ pub async fn handle_events(
 
     let mut transfers = HashMap::new();
     let mut warned = false;
+    let mut stats = TransferStats::default();
 
     loop {
         tokio::select! {
@@ -581,8 +623,8 @@ pub async fn handle_events(
                 Ok(TransferEvent::BlockProgress { id, block, transferred }) => {
                     if let Some(transfer) = transfers.get_mut(&id)
                         && let Some(block) = transfer.block_transfers.get_mut(&block) {
-                            transfer.transferred += transferred;
-                            block.transferred += transferred;
+                            transfer.transferred += transferred - block.transferred;
+                            block.transferred = transferred;
                             transfer.bar.pb_set_position(transfer.transferred);
                         }
                 }
@@ -597,8 +639,11 @@ pub async fn handle_events(
                             transfer.bar.pb_set_position(transfer.transferred);
                         }
                 }
-                Ok(TransferEvent::TransferCompleted { id, .. }) => {
-                    transfers.remove(&id);
+                Ok(TransferEvent::TransferCompleted { id, failed }) => {
+                    if !failed && let Some(transfer) = transfers.remove(&id) {
+                        stats.files += 1;
+                        stats.bytes +=  transfer.transferred;
+                    }
                 }
                 Err(RecvError::Closed) => break,
                 Err(RecvError::Lagged(_)) => {
@@ -610,4 +655,6 @@ pub async fn handle_events(
             }
         }
     }
+
+    stats
 }

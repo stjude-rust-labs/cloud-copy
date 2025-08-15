@@ -56,13 +56,20 @@ impl Stream for ByteStream {
 pin_project! {
     /// A wrapper around a stream that sends progress events.
     pub struct TransferStream<S> {
+        // The underlying stream being transferred.
         #[pin]
         stream: S,
+        // The id of the transfer.
         id: u64,
+        // The block id of the transfer.
         block: u64,
+        // The total number of bytes transferred.
         transferred: u64,
+        // The time the last progress event was sent.
         last: Option<SystemTime>,
+        // The event stream.
         events: Option<broadcast::Sender<TransferEvent>>,
+        // Whether or not the stream is finished.
         finished: bool,
     }
 }
@@ -74,6 +81,7 @@ impl<S> TransferStream<S> {
         stream: S,
         id: u64,
         block: u64,
+        offset: u64,
         events: Option<broadcast::Sender<TransferEvent>>,
     ) -> Self
     where
@@ -83,7 +91,7 @@ impl<S> TransferStream<S> {
             stream,
             id,
             block,
-            transferred: 0,
+            transferred: offset,
             last: None,
             events,
             finished: false,
@@ -110,15 +118,21 @@ where
                 let now = SystemTime::now();
                 let update = this
                     .last
-                    .and_then(|last| now.duration_since(last).ok().map(|d| d >= UPDATE_INTERVAL))
+                    .map(|last| {
+                        now.duration_since(last).unwrap_or(Duration::ZERO) >= UPDATE_INTERVAL
+                    })
                     .unwrap_or(true);
 
+                *this.transferred += u64::try_from(bytes.len()).unwrap();
+
+                // Check to see if we need to send a progress update
                 if update && let Some(events) = &this.events {
+                    *this.last = Some(now);
                     events
                         .send(TransferEvent::BlockProgress {
                             id: *this.id,
                             block: *this.block,
-                            transferred: bytes.len().try_into().unwrap(),
+                            transferred: *this.transferred,
                         })
                         .ok();
                 }

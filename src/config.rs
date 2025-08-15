@@ -1,6 +1,7 @@
 //! Implementation of cloud configuration.
 
 use std::num::NonZero;
+use std::path::PathBuf;
 use std::thread::available_parallelism;
 use std::time::Duration;
 
@@ -35,7 +36,8 @@ pub struct GoogleAuthConfig {
 pub struct AzureConfig {
     /// Enables support for [Azurite](https://learn.microsoft.com/en-us/azure/storage/common/storage-use-azurite).
     ///
-    /// Requests for Azurite are expected to use host suffix `blob.core.windows.net.localhost`.
+    /// Requests for Azurite are expected to use host suffix
+    /// `blob.core.windows.net.localhost`.
     ///
     /// Any URLs that use the `az` scheme will be rewritten to use that suffix.
     ///
@@ -81,6 +83,11 @@ pub struct GoogleConfig {
 /// Configuration used in a cloud copy operation.
 #[derive(Debug, Clone, Default, Deserialize)]
 pub struct Config {
+    /// The cache directory to use for downloads.
+    ///
+    /// If `None`, downloads will not use a cache.
+    #[serde(default)]
+    pub cache_dir: Option<PathBuf>,
     /// The block size to use for file transfers.
     ///
     /// The default block size depends on the cloud storage service.
@@ -88,7 +95,7 @@ pub struct Config {
     pub block_size: Option<u64>,
     /// The parallelism level for network operations.
     ///
-    /// Defaults to the host's available parallelism multiplied by 4.
+    /// Defaults to the host's available parallelism.
     #[serde(default)]
     pub parallelism: Option<usize>,
     /// The number of retries to attempt for network operations.
@@ -117,10 +124,10 @@ impl Config {
     /// downloaded if the download supports ranged requests.
     ///
     /// Defaults to the host's available parallelism (or 1 if it cannot be
-    /// determined) multiplied by 4.
+    /// determined).
     pub fn parallelism(&self) -> usize {
         self.parallelism
-            .unwrap_or_else(|| available_parallelism().map(NonZero::get).unwrap_or(1) * 4)
+            .unwrap_or_else(|| available_parallelism().map(NonZero::get).unwrap_or(1))
     }
 
     /// Gets an iterator over the retry durations for network operations.
