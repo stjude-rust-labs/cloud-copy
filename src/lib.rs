@@ -345,7 +345,7 @@ impl Error {
             {
                 RetryError::transient(self)
             }
-            Error::Io(_) | Error::Reqwest(_) => RetryError::transient(self),
+            Error::Io(_) | Error::Reqwest(_) | Error::Middleware(_) => RetryError::transient(self),
             _ => RetryError::permanent(self),
         }
     }

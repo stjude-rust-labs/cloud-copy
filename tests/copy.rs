@@ -359,7 +359,7 @@ async fn roundtrip_directory() -> Result<()> {
                         .context("failed to compare files")?
                     {
                         bail!(
-                            "contents of upo file `{source}` does not match the contents of \
+                            "contents of uploaded file `{source}` does not match the contents of \
                              downloaded file `{destination}`",
                             source = source.display(),
                             destination = destination.display()
