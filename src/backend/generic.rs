@@ -2,8 +2,12 @@
 //!
 //! The generic storage backend can only be used for downloading files.
 
+use std::sync::Arc;
+
 use bytes::Bytes;
 use chrono::Utc;
+use http_cache_stream_reqwest::Cache;
+use http_cache_stream_reqwest::storage::DefaultCacheStorage;
 use reqwest::Response;
 use reqwest::StatusCode;
 use reqwest::header;
@@ -69,6 +73,10 @@ pub struct GenericStorageBackend {
     config: Config,
     /// The HTTP client to use for transferring files.
     client: ClientWithMiddleware,
+    /// The HTTP cache used by the client.
+    ///
+    /// This is `None` if caching is not enabled.
+    cache: Option<Arc<Cache<DefaultCacheStorage>>>,
     /// The channel for sending transfer events.
     events: Option<broadcast::Sender<TransferEvent>>,
 }
@@ -77,10 +85,11 @@ impl GenericStorageBackend {
     /// Constructs a new generic storage backend with the given configuration
     /// and events channel.
     pub fn new(config: Config, events: Option<broadcast::Sender<TransferEvent>>) -> Self {
-        let client = new_http_client(&config);
+        let (client, cache) = new_http_client(&config);
         Self {
             config,
             client,
+            cache,
             events,
         }
     }
@@ -91,6 +100,10 @@ impl StorageBackend for GenericStorageBackend {
 
     fn config(&self) -> &Config {
         &self.config
+    }
+
+    fn cache(&self) -> Option<&Cache<DefaultCacheStorage>> {
+        self.cache.as_deref()
     }
 
     fn events(&self) -> &Option<broadcast::Sender<TransferEvent>> {

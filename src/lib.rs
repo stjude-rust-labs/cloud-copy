@@ -19,6 +19,7 @@
 use std::fmt;
 use std::path::Path;
 use std::path::PathBuf;
+use std::sync::Arc;
 use std::time::Duration;
 
 use http_cache_stream_reqwest::Cache;
@@ -27,8 +28,13 @@ use reqwest::Client;
 use reqwest::StatusCode;
 use reqwest_middleware::ClientBuilder;
 use reqwest_middleware::ClientWithMiddleware;
+use tokio::fs::OpenOptions;
+use tokio::io::BufReader;
+use tokio::io::BufWriter;
 use tokio::sync::broadcast;
 use tokio_retry2::RetryError;
+use tokio_util::io::ReaderStream;
+use tokio_util::io::StreamReader;
 use tokio_util::sync::CancellationToken;
 use tracing::info;
 use tracing::warn;
@@ -40,6 +46,7 @@ use crate::backend::generic::GenericStorageBackend;
 use crate::backend::google::GoogleError;
 use crate::backend::google::GoogleStorageBackend;
 use crate::backend::s3::S3StorageBackend;
+use crate::streams::TransferStream;
 use crate::transfer::FileTransfer;
 
 mod backend;
@@ -188,7 +195,15 @@ impl UrlExt for Url {
 }
 
 /// Constructs a new HTTP client with default options.
-fn new_http_client(config: &Config) -> ClientWithMiddleware {
+///
+/// If caching is enabled in the provided configuration, the cache used to
+/// configure the client is returned.
+fn new_http_client(
+    config: &Config,
+) -> (
+    ClientWithMiddleware,
+    Option<Arc<Cache<DefaultCacheStorage>>>,
+) {
     /// The timeout for the connecting phase of the client.
     const DEFAULT_CONNECT_TIMEOUT: Duration = Duration::from_secs(60);
     /// The timeout for a read of the client.
@@ -202,16 +217,20 @@ fn new_http_client(config: &Config) -> ClientWithMiddleware {
             .expect("failed to build HTTP client"),
     );
 
-    if let Some(cache_dir) = &config.cache_dir {
+    let cache = if let Some(cache_dir) = &config.cache_dir {
         info!(
             "using HTTP download cache directory `{dir}`",
             dir = cache_dir.display()
         );
 
-        builder = builder.with(Cache::new(DefaultCacheStorage::new(cache_dir)));
-    }
+        let cache = Arc::new(Cache::new(DefaultCacheStorage::new(cache_dir)));
+        builder = builder.with_arc(cache.clone());
+        Some(cache)
+    } else {
+        None
+    };
 
-    builder.build()
+    (builder.build(), cache)
 }
 
 /// Helper for displaying a message in `Error`.
@@ -410,6 +429,95 @@ pub enum TransferEvent {
     },
 }
 
+/// Copies a local file to another path.
+///
+/// This differs from `tokio::fs::copy` in that progress events will be sent.
+async fn copy_local(
+    source: &Path,
+    destination: &Path,
+    cancel: CancellationToken,
+    events: Option<broadcast::Sender<TransferEvent>>,
+) -> Result<()> {
+    // The transfer id for the copy.
+    const ID: u64 = 0;
+    /// The block index for the copy.
+    const BLOCK: u64 = 0;
+
+    // Wrap the source stream with a transfer stream to emit events
+    let mut reader = StreamReader::new(TransferStream::new(
+        ReaderStream::new(BufReader::new(
+            OpenOptions::new().read(true).open(source).await?,
+        )),
+        ID,
+        BLOCK,
+        0,
+        events.clone(),
+    ));
+
+    let mut writer = BufWriter::new(
+        OpenOptions::new()
+            .create_new(true)
+            .write(true)
+            .open(destination)
+            .await?,
+    );
+
+    // Send the transfer and block started event
+    if let Some(events) = &events {
+        let size = std::fs::metadata(source)?.len();
+
+        events
+            .send(TransferEvent::TransferStarted {
+                id: ID,
+                path: destination.to_path_buf(),
+                blocks: 1,
+                size: Some(size),
+            })
+            .ok();
+
+        events
+            .send(TransferEvent::BlockStarted {
+                id: ID,
+                block: BLOCK,
+                size: Some(size),
+            })
+            .ok();
+    }
+
+    // Copy the reader stream to the writer stream
+    let result = tokio::select! {
+        _ = cancel.cancelled() => {
+            drop(writer);
+            std::fs::remove_file(destination).ok();
+            Err(Error::Canceled)
+        },
+        r = tokio::io::copy(&mut reader, &mut writer) => {
+            r?;
+            Ok(())
+        }
+    };
+
+    // Send the block and transfer end event
+    if let Some(events) = &events {
+        events
+            .send(TransferEvent::BlockCompleted {
+                id: ID,
+                block: BLOCK,
+                failed: result.is_err(),
+            })
+            .ok();
+
+        events
+            .send(TransferEvent::TransferCompleted {
+                id: ID,
+                failed: result.is_err(),
+            })
+            .ok();
+    }
+
+    result
+}
+
 /// Copies a source location to a destination location.
 ///
 /// A location may either be a local path or a remote URL.
@@ -451,7 +559,8 @@ pub enum TransferEvent {
 /// If authentication is required, the provided `Config` must have Google
 /// authentication information.
 ///
-/// Note that [HMAC authentication](https://cloud.google.com/storage/docs/authentication/hmackeys) is used for Google Cloud Storage access.
+/// Note that [HMAC authentication](https://cloud.google.com/storage/docs/authentication/hmackeys)
+/// is used for Google Cloud Storage access.
 pub async fn copy(
     config: Config,
     source: impl Into<Location<'_>>,
@@ -464,19 +573,17 @@ pub async fn copy(
 
     match (source, destination) {
         (Location::Path(source), Location::Path(destination)) => {
+            if destination.exists() {
+                return Err(Error::DestinationExists(destination.to_path_buf()));
+            }
+
             // Two local locations, just perform a copy
-            tokio::fs::copy(source, destination)
-                .await
-                .map(|_| ())
-                .map_err(Into::into)
+            Ok(copy_local(source, destination, cancel, events).await?)
         }
         (Location::Path(source), Location::Url(destination)) => {
             // Perform a copy if the the destination is a local path
             if let Some(destination) = destination.to_local_path()? {
-                return tokio::fs::copy(source, destination)
-                    .await
-                    .map(|_| ())
-                    .map_err(Into::into);
+                return copy_local(source, &destination, cancel, events).await;
             }
 
             if AzureBlobStorageBackend::is_supported_url(&config, &destination) {
@@ -494,16 +601,13 @@ pub async fn copy(
             }
         }
         (Location::Url(source), Location::Path(destination)) => {
-            // Perform a copy if the the source is a local path
-            if let Some(source) = source.to_local_path()? {
-                return tokio::fs::copy(source, destination)
-                    .await
-                    .map(|_| ())
-                    .map_err(Into::into);
-            }
-
             if destination.exists() {
                 return Err(Error::DestinationExists(destination.to_path_buf()));
+            }
+
+            // Perform a copy if the the source is a local path
+            if let Some(source) = source.to_local_path()? {
+                return copy_local(&source, destination, cancel, events).await;
             }
 
             if AzureBlobStorageBackend::is_supported_url(&config, &source) {
@@ -527,10 +631,7 @@ pub async fn copy(
                 (source.to_local_path()?, destination.to_local_path()?)
             {
                 // Two local locations, just perform a copy
-                return tokio::fs::copy(source, destination)
-                    .await
-                    .map(|_| ())
-                    .map_err(Into::into);
+                return copy_local(&source, &destination, cancel, events).await;
             }
 
             Err(Error::RemoteCopyNotSupported)
@@ -570,8 +671,6 @@ pub async fn handle_events(
     use tracing_indicatif::style::ProgressStyle;
 
     struct BlockTransferState {
-        /// The size of the block being transferred.
-        size: Option<u64>,
         /// The number of bytes that were transferred for the block.
         transferred: u64,
     }
@@ -615,9 +714,9 @@ pub async fn handle_events(
                     bar.pb_start();
                     transfers.insert(id, TransferState { bar, transferred: 0, block_transfers: HashMap::new() });
                 }
-                Ok(TransferEvent::BlockStarted { id, block, size }) => {
+                Ok(TransferEvent::BlockStarted { id, block, .. }) => {
                     if let Some(transfer) = transfers.get_mut(&id) {
-                        transfer.block_transfers.insert(block, BlockTransferState { size, transferred: 0});
+                        transfer.block_transfers.insert(block, BlockTransferState { transferred: 0});
                     }
                 }
                 Ok(TransferEvent::BlockProgress { id, block, transferred }) => {
@@ -631,9 +730,8 @@ pub async fn handle_events(
                 Ok(TransferEvent::BlockCompleted { id, block, failed }) => {
                     if let Some(transfer) = transfers.get_mut(&id)
                         && let Some(block) = transfer.block_transfers.get_mut(&block) {
-                            transfer.transferred -= block.transferred;
-                            if !failed && let Some(size) = block.size {
-                                transfer.transferred += size;
+                            if failed {
+                                transfer.transferred -= block.transferred;
                             }
 
                             transfer.bar.pb_set_position(transfer.transferred);

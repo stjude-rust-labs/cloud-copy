@@ -378,3 +378,93 @@ async fn roundtrip_directory() -> Result<()> {
 
     Ok(())
 }
+
+/// Test for linking to cached files.
+///
+/// This test runs only on Unix operating systems as the requisite [method on
+/// Windows][1] is only available on nightly.
+///
+/// [1]: https://doc.rust-lang.org/std/os/windows/fs/trait.MetadataExt.html#tymethod.number_of_links
+#[cfg_attr(windows, ignore = "test not implemented on Windows")]
+#[tokio::test]
+async fn link_to_cache() -> Result<()> {
+    use std::os::unix::fs::MetadataExt;
+
+    let cache_dir = tempdir().context("failed to create temp directory")?;
+
+    let destination = NamedTempFile::new()
+        .context("failed to create destination file")?
+        .into_temp_path();
+    fs::remove_file(&destination).context("failed to delete destination file")?;
+
+    let cancel = CancellationToken::new();
+
+    // Download the file (and cache it)
+    cloud_copy::copy(
+        Config {
+            cache_dir: Some(cache_dir.path().to_path_buf()),
+            ..Default::default()
+        },
+        "https://example.com",
+        &*destination,
+        cancel.clone(),
+        None,
+    )
+    .await
+    .context("failed to download file")?;
+
+    assert!(destination.is_file(), "destination is not a file");
+
+    fs::remove_file(&destination).context("failed to delete destination file")?;
+
+    // Download the file again (it'll copy from the cache)
+    cloud_copy::copy(
+        Config {
+            cache_dir: Some(cache_dir.path().to_path_buf()),
+            ..Default::default()
+        },
+        "https://example.com",
+        &*destination,
+        cancel.clone(),
+        None,
+    )
+    .await
+    .context("failed to download file")?;
+
+    assert_eq!(
+        destination
+            .metadata()
+            .context("failed to read metadata of destination")?
+            .nlink(),
+        1,
+        "expected only a single link to the file"
+    );
+
+    fs::remove_file(&destination).context("failed to delete destination file")?;
+
+    // Download the file again (it'll link from the cache)
+    cloud_copy::copy(
+        Config {
+            cache_dir: Some(cache_dir.path().to_path_buf()),
+            link_to_cache: true,
+            ..Default::default()
+        },
+        "https://example.com",
+        &*destination,
+        cancel,
+        None,
+    )
+    .await
+    .context("failed to download file")?;
+
+    assert_eq!(
+        destination
+            .metadata()
+            .context("failed to read metadata of destination")?
+            .nlink(),
+        2,
+        "expected two links to the file"
+    );
+
+    Ok(())
+}

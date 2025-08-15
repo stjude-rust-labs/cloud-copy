@@ -12,6 +12,8 @@ use futures::FutureExt;
 use futures::StreamExt;
 use futures::TryStreamExt;
 use futures::stream;
+use http_cache_stream_reqwest::CacheStorage;
+use http_cache_stream_reqwest::X_CACHE_DIGEST;
 use reqwest::StatusCode;
 use reqwest::header;
 use tempfile::NamedTempFile;
@@ -25,6 +27,7 @@ use tokio_util::io::StreamReader;
 use tokio_util::sync::CancellationToken;
 use tracing::debug;
 use tracing::info;
+use tracing::warn;
 use url::Url;
 use walkdir::WalkDir;
 
@@ -130,22 +133,16 @@ where
                 })?;
 
             // Use a temp file that will be atomically renamed when the download completes
-            let temp = NamedTempFile::with_prefix_in(".", parent)
-                .map_err(|error| Error::CreateTempFile { error })?;
+            let temp = NamedTempFile::with_prefix_in(".copy", parent)
+                .map_err(|error| Error::CreateTempFile { error })?
+                .into_temp_path();
 
             // Download the file with resumable retries
-            self.download_with_resume(
-                id,
-                &source,
-                temp.path(),
-                content_length,
-                etag,
-                cancel.clone(),
-            )
-            .await?;
+            self.download_with_resume(id, &source, &temp, content_length, etag, cancel.clone())
+                .await?;
 
             // Persist the temp file to the destination
-            temp.persist(destination)
+            temp.persist_noclobber(destination)
                 .map_err(|e| Error::PersistTempFile { error: e.error })?;
 
             Ok(())
@@ -208,7 +205,39 @@ where
                             .get_at_offset(source.clone(), etag, current)
                             .await?
                     } else {
-                        self.backend.get(source.clone()).await?
+                        let response = self.backend.get(source.clone()).await?;
+
+                        // Check to see if we should link to the cache location
+                        if self.backend.config().link_to_cache
+                            && let Some(digest) = response
+                                .headers()
+                                .get(X_CACHE_DIGEST)
+                                .and_then(|v| v.to_str().ok())
+                            && let Some(cache) = self.backend.cache()
+                        {
+                            let path = cache.storage().body_path(digest);
+                            if path.is_file() {
+                                // Remove the existing temp file and replace it with a hard link
+                                fs::remove_file(destination).await.ok();
+                                match fs::hard_link(&path, destination).await {
+                                    Ok(_) => {
+                                        debug!(
+                                            "created a hard link from cache location `{path}`",
+                                            path = path.display(),
+                                        );
+                                        return Ok(());
+                                    }
+                                    Err(e) => {
+                                        warn!(
+                                            "failed to create a hard link to cached file \
+                                             (performing a copy instead): {e}"
+                                        );
+                                    }
+                                }
+                            }
+                        }
+
+                        response
                     };
 
                     // If the response is not partial, start from the beginning

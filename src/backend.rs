@@ -1,6 +1,8 @@
 //! Implementation of storage backends.
 
 use bytes::Bytes;
+use http_cache_stream_reqwest::Cache;
+use http_cache_stream_reqwest::storage::DefaultCacheStorage;
 use reqwest::Response;
 use tokio::sync::broadcast;
 use url::Url;
@@ -41,6 +43,11 @@ pub trait StorageBackend {
 
     /// Gets the configuration used by the backend.
     fn config(&self) -> &Config;
+
+    /// Gets the HTTP cache used by the backend.
+    ///
+    /// Returns `None` if caching is not enabled.
+    fn cache(&self) -> Option<&Cache<DefaultCacheStorage>>;
 
     /// Gets the channel for sending transfer events.
     fn events(&self) -> &Option<broadcast::Sender<TransferEvent>>;

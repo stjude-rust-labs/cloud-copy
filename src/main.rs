@@ -101,6 +101,10 @@ struct Args {
     #[clap(long, value_name = "DIR")]
     cache_dir: Option<PathBuf>,
 
+    /// Whether or not to create hard links to existing cached files.
+    #[clap(long)]
+    link_to_cache: bool,
+
     /// The block size to use for file transfers; the default block size depends
     /// on the cloud service.
     #[clap(long, value_name = "SIZE")]
@@ -175,6 +179,7 @@ impl Args {
 
         let config = Config {
             cache_dir: self.cache_dir,
+            link_to_cache: self.link_to_cache,
             block_size: self.block_size,
             parallelism: self.parallelism,
             retries: self.retries,
