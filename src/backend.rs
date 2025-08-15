@@ -78,13 +78,8 @@ pub trait StorageBackend {
     /// Returns `Ok(_)` if the response returns a 200 (full content) or 206
     /// (partial content).
     ///
-    /// Returns an error if the request was not successful, the etag did not
-    /// match (condition not met), or if the content range does not not match
-    /// the requested range.
-    ///
-    /// # Panics
-    ///
-    /// Panics if the provided range is empty.
+    /// Returns an error if the request was not successful or if the etag did
+    /// not match (condition not met).
     fn get_at_offset(
         &self,
         url: Url,
