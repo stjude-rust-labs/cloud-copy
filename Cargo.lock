@@ -861,8 +861,9 @@ dependencies = [
 
 [[package]]
 name = "http-cache-stream"
-version = "0.1.0"
-source = "git+https://github.com/peterhuene/http-cache-stream.git?branch=fixes#3f89fff896b6147a40a109026685a672e00b28d4"
+version = "0.2.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "3f85add2cd311dce74de15ab7a3f0b1deabc9c4ea8ab7c2abde022c27643975e"
 dependencies = [
  "anyhow",
  "bincode",
@@ -889,8 +890,9 @@ dependencies = [
 
 [[package]]
 name = "http-cache-stream-reqwest"
-version = "0.1.0"
-source = "git+https://github.com/peterhuene/http-cache-stream.git?branch=fixes#3f89fff896b6147a40a109026685a672e00b28d4"
+version = "0.2.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "0ddd4954ef92d43498e610ebe98721e12c7304254644dce8e6a68943c3e7c295"
 dependencies = [
  "anyhow",
  "bytes",
@@ -2423,9 +2425,9 @@ dependencies = [
 
 [[package]]
 name = "tracing-indicatif"
-version = "0.3.12"
+version = "0.3.13"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e1983afead46ff13a3c93581e0cec31d20b29efdd22cbdaa8b9f850eccf2c352"
+checksum = "04d4e11e0e27acef25a47f27e9435355fecdc488867fa2bc90e75b0700d2823d"
 dependencies = [
  "indicatif",
  "tracing",
