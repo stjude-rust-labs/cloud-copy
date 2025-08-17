@@ -1,18 +1,17 @@
 //! Implementation of the S3 storage backend.
 
-use std::ops::Range;
 use std::sync::Arc;
 
 use bytes::Bytes;
 use chrono::DateTime;
 use chrono::Utc;
 use reqwest::Body;
-use reqwest::Client;
 use reqwest::Request;
 use reqwest::Response;
 use reqwest::StatusCode;
 use reqwest::header;
 use reqwest::header::HeaderValue;
+use reqwest_middleware::ClientWithMiddleware;
 use secrecy::ExposeSecret;
 use serde::Deserialize;
 use serde::Serialize;
@@ -333,7 +332,7 @@ pub struct S3Upload {
     /// The configuration to use for the upload.
     config: Arc<Config>,
     /// The HTTP client to use for uploading.
-    client: Client,
+    client: ClientWithMiddleware,
     /// The URL of the object being uploaded.
     url: Url,
     /// The identifier of this upload.
@@ -367,6 +366,7 @@ impl Upload for S3Upload {
             ByteStream::new(bytes),
             id,
             block,
+            0,
             self.events.clone(),
         ));
 
@@ -462,7 +462,7 @@ pub struct S3StorageBackend {
     /// The config to use for transferring files.
     config: Arc<Config>,
     /// The HTTP client to use for transferring files.
-    client: Client,
+    client: ClientWithMiddleware,
     /// The channel for sending transfer events.
     events: Option<broadcast::Sender<TransferEvent>>,
 }
@@ -470,9 +470,10 @@ pub struct S3StorageBackend {
 impl S3StorageBackend {
     /// Constructs a new S3 storage backend.
     pub fn new(config: Config, events: Option<broadcast::Sender<TransferEvent>>) -> Self {
+        let client = new_http_client(&config);
         Self {
             config: Arc::new(config),
-            client: new_http_client(),
+            client,
             events,
         }
     }
@@ -681,7 +682,7 @@ impl StorageBackend for S3StorageBackend {
         Ok(response)
     }
 
-    async fn get_range(&self, url: Url, etag: &str, range: Range<u64>) -> Result<Response> {
+    async fn get_at_offset(&self, url: Url, etag: &str, offset: u64) -> Result<Response> {
         debug_assert!(
             Self::is_supported_url(&self.config, &url),
             "{url} is not a supported S3 URL",
@@ -689,10 +690,8 @@ impl StorageBackend for S3StorageBackend {
         );
 
         debug!(
-            "sending ranged GET request for `{url}` ({start}-{end})",
+            "sending GET request at offset {offset} for `{url}`",
             url = url.display(),
-            start = range.start,
-            end = range.end
         );
 
         let date = Utc::now();
@@ -703,10 +702,7 @@ impl StorageBackend for S3StorageBackend {
             .header(header::USER_AGENT, USER_AGENT)
             .header(AWS_DATE_HEADER, date.format("%Y%m%dT%H%M%SZ").to_string())
             .header(AWS_CONTENT_SHA256_HEADER, sha256_hex_string([]))
-            .header(
-                header::RANGE,
-                format!("bytes={start}-{end}", start = range.start, end = range.end),
-            )
+            .header(header::RANGE, format!("bytes={offset}-"))
             .header(header::IF_MATCH, etag)
             .build()?;
 

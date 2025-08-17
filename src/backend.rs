@@ -1,7 +1,5 @@
 //! Implementation of storage backends.
 
-use std::ops::Range;
-
 use bytes::Bytes;
 use reqwest::Response;
 use tokio::sync::broadcast;
@@ -55,7 +53,8 @@ pub trait StorageBackend {
 
     /// Rewrites the given URL.
     ///
-    /// If the URL is using a cloud-specific scheme, the URL is rewritten to a `https` schemed URL.
+    /// If the URL is using a cloud-specific scheme, the URL is rewritten to a
+    /// `https` schemed URL.
     ///
     /// Otherwise, the given URL is returned as-is.
     fn rewrite_url(&self, url: Url) -> Result<Url>;
@@ -73,17 +72,19 @@ pub trait StorageBackend {
     /// Returns an error if the request was not successful.
     fn get(&self, url: Url) -> impl Future<Output = Result<Response>> + Send;
 
-    /// Sends a conditional ranged GET request for the given URL.
+    /// Sends a conditional ranged GET request for the given URL at the given
+    /// start offset.
     ///
-    /// Returns `Ok(_)` if the response returns 206 (partial content).
+    /// Returns `Ok(_)` if the response returns a 200 (full content) or 206
+    /// (partial content).
     ///
-    /// Returns an error if the request was not successful or if the condition
-    /// was not met.
-    fn get_range(
+    /// Returns an error if the request was not successful or if the etag did
+    /// not match (condition not met).
+    fn get_at_offset(
         &self,
         url: Url,
         etag: &str,
-        range: Range<u64>,
+        offset: u64,
     ) -> impl Future<Output = Result<Response>> + Send;
 
     /// Walks a given storage URL as if it were a directory.

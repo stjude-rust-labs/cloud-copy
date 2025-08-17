@@ -17,10 +17,11 @@ use futures::future::LocalBoxFuture;
 use rand::Rng;
 use tempfile::NamedTempFile;
 use tempfile::tempdir;
+use tokio::fs::File;
 use tokio::io::AsyncReadExt;
 use tokio::io::AsyncWriteExt;
 use tokio::io::BufReader;
-use tokio::{fs::File, io::BufWriter};
+use tokio::io::BufWriter;
 use tokio_util::sync::CancellationToken;
 use url::Url;
 use walkdir::WalkDir;
@@ -179,7 +180,8 @@ fn config() -> Config {
     }
 }
 
-/// Round trips a file of a given size by uploading it to cloud storage and then downloading it again.
+/// Round trips a file of a given size by uploading it to cloud storage and then
+/// downloading it again.
 async fn roundtrip_file(test: &str, size: usize) -> Result<()> {
     let config = config();
     let cancel = CancellationToken::new();
@@ -203,7 +205,8 @@ async fn roundtrip_file(test: &str, size: usize) -> Result<()> {
             .await
             .context("failed to upload file")?;
 
-        // Copy the file from the cloud to a local file (delete it first in case it exists)
+        // Copy the file from the cloud to a local file (delete it first in case it
+        // exists)
         fs::remove_file(&destination).context("failed to delete destination file")?;
         cloud_copy::copy(
             config.clone(),
@@ -314,7 +317,8 @@ async fn roundtrip_directory() -> Result<()> {
         .await
         .context("failed to upload directory")?;
 
-        // Copy the directory from the cloud to a local directory (delete it first in case it exists)
+        // Copy the directory from the cloud to a local directory (delete it first in
+        // case it exists)
         fs::remove_dir_all(destination.path()).context("failed to delete destination directory")?;
         cloud_copy::copy(
             config.clone(),
@@ -355,14 +359,16 @@ async fn roundtrip_directory() -> Result<()> {
                         .context("failed to compare files")?
                     {
                         bail!(
-                            "contents of upo file `{source}` does not match the contents of downloaded file `{destination}`",
+                            "contents of uploaded file `{source}` does not match the contents of \
+                             downloaded file `{destination}`",
                             source = source.display(),
                             destination = destination.display()
                         );
                     }
                 }
                 _ => bail!(
-                    "source entry `{source}` does not match the type of download entry `{destination}`",
+                    "source entry `{source}` does not match the type of download entry \
+                     `{destination}`",
                     source = source.display(),
                     destination = destination.display()
                 ),

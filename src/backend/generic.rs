@@ -2,14 +2,12 @@
 //!
 //! The generic storage backend can only be used for downloading files.
 
-use std::ops::Range;
-
 use bytes::Bytes;
 use chrono::Utc;
-use reqwest::Client;
 use reqwest::Response;
 use reqwest::StatusCode;
 use reqwest::header;
+use reqwest_middleware::ClientWithMiddleware;
 use tokio::sync::broadcast;
 use tracing::debug;
 use url::Url;
@@ -70,7 +68,7 @@ pub struct GenericStorageBackend {
     /// The configuration to use for transferring files.
     config: Config,
     /// The HTTP client to use for transferring files.
-    client: Client,
+    client: ClientWithMiddleware,
     /// The channel for sending transfer events.
     events: Option<broadcast::Sender<TransferEvent>>,
 }
@@ -79,9 +77,10 @@ impl GenericStorageBackend {
     /// Constructs a new generic storage backend with the given configuration
     /// and events channel.
     pub fn new(config: Config, events: Option<broadcast::Sender<TransferEvent>>) -> Self {
+        let client = new_http_client(&config);
         Self {
             config,
-            client: new_http_client(),
+            client,
             events,
         }
     }
@@ -163,12 +162,10 @@ impl StorageBackend for GenericStorageBackend {
         Ok(response)
     }
 
-    async fn get_range(&self, url: Url, etag: &str, range: Range<u64>) -> Result<Response> {
+    async fn get_at_offset(&self, url: Url, etag: &str, offset: u64) -> Result<Response> {
         debug!(
-            "sending ranged GET request for `{url}` ({start}-{end})",
+            "sending GET request at offset {offset} for `{url}`",
             url = url.display(),
-            start = range.start,
-            end = range.end
         );
 
         let response = self
@@ -176,10 +173,7 @@ impl StorageBackend for GenericStorageBackend {
             .get(url)
             .header(header::USER_AGENT, USER_AGENT)
             .header(header::DATE, Utc::now().to_rfc2822())
-            .header(
-                header::RANGE,
-                format!("bytes={start}-{end}", start = range.start, end = range.end),
-            )
+            .header(header::RANGE, format!("bytes={offset}-"))
             .header(header::IF_MATCH, etag)
             .send()
             .await?;
@@ -194,11 +188,6 @@ impl StorageBackend for GenericStorageBackend {
         // Handle error response
         if !status.is_success() {
             return Err(response.into_error().await);
-        }
-
-        // We expect partial content, otherwise treat as remote content modified
-        if status != StatusCode::PARTIAL_CONTENT {
-            return Err(Error::RemoteContentModified);
         }
 
         Ok(response)
