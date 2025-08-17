@@ -9,6 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 #### Added
 
+* Added support for linking files to the cache ([#6](https://github.com/stjude-rust-labs/cloud-copy/pull/6)).
 * Added statistics to the CLI upon successful copy ([#5](https://github.com/stjude-rust-labs/cloud-copy/pull/5)).
 * Added `--cache-dir` CLI option for download caching ([#5](https://github.com/stjude-rust-labs/cloud-copy/pull/5)).
 * Added testing with emulators Azurite and localstack ([#4](https://github.com/stjude-rust-labs/cloud-copy/pull/4)).
