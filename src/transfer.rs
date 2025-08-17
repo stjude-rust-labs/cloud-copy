@@ -41,6 +41,16 @@ use crate::notify_retry;
 use crate::pool::BufferPool;
 use crate::streams::TransferStream;
 
+/// Gets the next transfer id.
+fn next_id() -> u64 {
+    /// The next transfer identifier.
+    ///
+    /// This is monotonically increasing across all file transfers.
+    static NEXT_ID: AtomicU64 = AtomicU64::new(0);
+
+    NEXT_ID.fetch_add(1, Ordering::SeqCst)
+}
+
 /// Represents information about a file being uploaded.
 #[derive(Clone, Copy)]
 struct UploadInfo {
@@ -60,19 +70,12 @@ struct FileTransferInner<B> {
     backend: B,
     /// The buffer pool for buffering blocks before writing them to disk.
     pool: BufferPool,
-    /// Stores the next transfer id to use for events.
-    next_id: AtomicU64,
 }
 
 impl<B> FileTransferInner<B>
 where
     B: StorageBackend + Send + Sync + 'static,
 {
-    /// Gets the next transfer id.
-    fn next_id(&self) -> u64 {
-        self.next_id.fetch_add(1, Ordering::SeqCst)
-    }
-
     /// Downloads a file to the given destination path.
     async fn download(
         &self,
@@ -101,7 +104,7 @@ where
         )
         .await?;
 
-        let id = self.next_id();
+        let id = next_id();
 
         // Check for a strong etag
         let etag = response
@@ -514,11 +517,7 @@ where
     pub fn new(backend: B, cancel: CancellationToken) -> Self {
         let pool = BufferPool::new(backend.config().parallelism());
         Self {
-            inner: Arc::new(FileTransferInner {
-                backend,
-                pool,
-                next_id: AtomicU64::new(0),
-            }),
+            inner: Arc::new(FileTransferInner { backend, pool }),
             cancel,
         }
     }
@@ -648,7 +647,7 @@ where
             file_size.div_ceil(block_size)
         };
 
-        let id = self.inner.next_id();
+        let id = next_id();
 
         debug!(
             "file `{source}` is {file_size} bytes and will be uploaded with {num_blocks} block(s) \
