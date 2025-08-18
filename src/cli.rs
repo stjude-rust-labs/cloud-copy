@@ -153,7 +153,7 @@ pub async fn handle_events(
                 }
                 Ok(TransferEvent::BlockStarted { id, block, .. }) => {
                     if let Some(transfer) = transfers.get_mut(&id) {
-                        transfer.block_transfers.insert(block, BlockTransferState { transferred: 0});
+                        transfer.block_transfers.insert(block, BlockTransferState { transferred: 0 });
                     }
                 }
                 Ok(TransferEvent::BlockProgress { id, block, transferred }) => {
