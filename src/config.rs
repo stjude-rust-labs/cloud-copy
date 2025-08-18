@@ -88,6 +88,22 @@ pub struct Config {
     /// If `None`, downloads will not use a cache.
     #[serde(default)]
     pub cache_dir: Option<PathBuf>,
+    /// If `link_to_cache` is `true`, then a downloaded file that is already
+    /// present (and fresh) in the cache will be hard linked at the requested
+    /// destination instead of copied.
+    ///
+    /// If the creation of the hard link fails (for example, the cache exists on
+    /// a different file system than the destination path), then a copy to the
+    /// destination will be made instead.
+    ///
+    /// Note that cache files are created read-only; if the destination is
+    /// created as a hard link, it will also be read-only. It is not recommended
+    /// to make the destination writable as writing to the destination path
+    /// would corrupt the corresponding content entry in the cache.
+    ///
+    /// When `false`, a copy to the destination is always performed.
+    #[serde(default)]
+    pub link_to_cache: bool,
     /// The block size to use for file transfers.
     ///
     /// The default block size depends on the cloud storage service.

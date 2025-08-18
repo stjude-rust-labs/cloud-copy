@@ -1,6 +1,5 @@
 //! Cloud storage copy utility.
 
-use std::fmt;
 use std::io::IsTerminal;
 use std::io::stderr;
 use std::path::PathBuf;
@@ -9,7 +8,6 @@ use anyhow::Context;
 use anyhow::Result;
 use byte_unit::Byte;
 use byte_unit::UnitType;
-use chrono::TimeDelta;
 use chrono::Utc;
 use clap::Parser;
 use clap_verbosity_flag::Verbosity;
@@ -21,8 +19,9 @@ use cloud_copy::GoogleConfig;
 use cloud_copy::Location;
 use cloud_copy::S3AuthConfig;
 use cloud_copy::S3Config;
+use cloud_copy::cli::TimeDeltaExt;
+use cloud_copy::cli::handle_events;
 use cloud_copy::copy;
-use cloud_copy::handle_events;
 use colored::Colorize;
 use secrecy::SecretString;
 use tokio::pin;
@@ -31,61 +30,6 @@ use tokio_util::sync::CancellationToken;
 use tracing_indicatif::IndicatifLayer;
 use tracing_subscriber::EnvFilter;
 use tracing_subscriber::layer::SubscriberExt;
-
-/// Display implementation for time deltas.
-struct DisplayTimeDelta(TimeDelta);
-
-impl fmt::Display for DisplayTimeDelta {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        if self.0.num_seconds() == 0 {
-            return write!(f, "0 seconds");
-        }
-
-        let days = self.0.num_days();
-        let hours = self.0.num_hours() - (days * 24);
-        let minutes = self.0.num_minutes() - (days * 24 * 60) - (hours * 60);
-        let seconds =
-            self.0.num_seconds() - -(days * 24 * 60 * 60) - (hours * 60 * 60) - (minutes * 60);
-
-        if days > 0 {
-            write!(f, "{days} day{s}", s = if days == 1 { "" } else { "s" })?;
-        }
-
-        if hours > 0 {
-            if days > 0 {
-                write!(f, ", ")?;
-            }
-
-            write!(f, "{hours} hour{s}", s = if hours == 1 { "" } else { "s" })?;
-        }
-
-        if minutes > 0 {
-            if days > 0 || hours > 0 {
-                write!(f, ", ")?;
-            }
-
-            write!(
-                f,
-                "{minutes} minute{s}",
-                s = if minutes == 1 { "" } else { "s" }
-            )?;
-        }
-
-        if seconds > 0 {
-            if days > 0 || hours > 0 || minutes > 0 {
-                write!(f, ", ")?;
-            }
-
-            write!(
-                f,
-                "{seconds} second{s}",
-                s = if seconds == 1 { "" } else { "s" }
-            )?;
-        }
-
-        Ok(())
-    }
-}
 
 #[derive(Parser, Debug)]
 struct Args {
@@ -100,6 +44,10 @@ struct Args {
     /// The cache directory to use for downloads.
     #[clap(long, value_name = "DIR")]
     cache_dir: Option<PathBuf>,
+
+    /// Whether or not to create hard links to existing cached files.
+    #[clap(long)]
+    link_to_cache: bool,
 
     /// The block size to use for file transfers; the default block size depends
     /// on the cloud service.
@@ -175,6 +123,7 @@ impl Args {
 
         let config = Config {
             cache_dir: self.cache_dir,
+            link_to_cache: self.link_to_cache,
             block_size: self.block_size,
             parallelism: self.parallelism,
             retries: self.retries,
@@ -257,7 +206,7 @@ async fn run(cancel: CancellationToken) -> Result<()> {
                 Byte::from_u64(stats.bytes).get_appropriate_unit(UnitType::Binary)
             )
             .cyan(),
-            time = DisplayTimeDelta(delta).to_string().cyan(),
+            time = delta.english().to_string().cyan(),
             speed = format!(
                 "{bytes:#.3}/s",
                 bytes = if seconds == 0 || stats.bytes < 60 {

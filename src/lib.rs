@@ -10,8 +10,8 @@
 //! used to display transfer progress.
 //!
 //! Additionally, when this crate is built with the `cli` feature enabled, a
-//! [`handle_events`] function is exported that will display progress bars using
-//! the `tracing_indicatif` crate.
+//! [`handle_events`][cli::handle_events] function is exported that will display
+//! progress bars using the `tracing_indicatif` crate.
 
 #![deny(rustdoc::broken_intra_doc_links)]
 #![cfg_attr(docsrs, feature(doc_cfg))]
@@ -19,6 +19,7 @@
 use std::fmt;
 use std::path::Path;
 use std::path::PathBuf;
+use std::sync::Arc;
 use std::time::Duration;
 
 use http_cache_stream_reqwest::Cache;
@@ -27,8 +28,13 @@ use reqwest::Client;
 use reqwest::StatusCode;
 use reqwest_middleware::ClientBuilder;
 use reqwest_middleware::ClientWithMiddleware;
+use tokio::fs::OpenOptions;
+use tokio::io::BufReader;
+use tokio::io::BufWriter;
 use tokio::sync::broadcast;
 use tokio_retry2::RetryError;
+use tokio_util::io::ReaderStream;
+use tokio_util::io::StreamReader;
 use tokio_util::sync::CancellationToken;
 use tracing::info;
 use tracing::warn;
@@ -40,9 +46,13 @@ use crate::backend::generic::GenericStorageBackend;
 use crate::backend::google::GoogleError;
 use crate::backend::google::GoogleStorageBackend;
 use crate::backend::s3::S3StorageBackend;
+use crate::streams::TransferStream;
 use crate::transfer::FileTransfer;
 
 mod backend;
+#[cfg(feature = "cli")]
+#[cfg_attr(docsrs, doc(cfg(feature = "cli")))]
+pub mod cli;
 mod config;
 mod generator;
 mod os;
@@ -188,7 +198,15 @@ impl UrlExt for Url {
 }
 
 /// Constructs a new HTTP client with default options.
-fn new_http_client(config: &Config) -> ClientWithMiddleware {
+///
+/// If caching is enabled in the provided configuration, the cache used to
+/// configure the client is returned.
+fn new_http_client(
+    config: &Config,
+) -> (
+    ClientWithMiddleware,
+    Option<Arc<Cache<DefaultCacheStorage>>>,
+) {
     /// The timeout for the connecting phase of the client.
     const DEFAULT_CONNECT_TIMEOUT: Duration = Duration::from_secs(60);
     /// The timeout for a read of the client.
@@ -202,16 +220,20 @@ fn new_http_client(config: &Config) -> ClientWithMiddleware {
             .expect("failed to build HTTP client"),
     );
 
-    if let Some(cache_dir) = &config.cache_dir {
+    let cache = if let Some(cache_dir) = &config.cache_dir {
         info!(
             "using HTTP download cache directory `{dir}`",
             dir = cache_dir.display()
         );
 
-        builder = builder.with(Cache::new(DefaultCacheStorage::new(cache_dir)));
-    }
+        let cache = Arc::new(Cache::new(DefaultCacheStorage::new(cache_dir)));
+        builder = builder.with_arc(cache.clone());
+        Some(cache)
+    } else {
+        None
+    };
 
-    builder.build()
+    (builder.build(), cache)
 }
 
 /// Helper for displaying a message in `Error`.
@@ -410,6 +432,95 @@ pub enum TransferEvent {
     },
 }
 
+/// Copies a local file to another path.
+///
+/// This differs from `tokio::fs::copy` in that progress events will be sent.
+async fn copy_local(
+    source: &Path,
+    destination: &Path,
+    cancel: CancellationToken,
+    events: Option<broadcast::Sender<TransferEvent>>,
+) -> Result<()> {
+    // The transfer id for the copy.
+    const ID: u64 = 0;
+    /// The block index for the copy.
+    const BLOCK: u64 = 0;
+
+    // Wrap the source stream with a transfer stream to emit events
+    let mut reader = StreamReader::new(TransferStream::new(
+        ReaderStream::new(BufReader::new(
+            OpenOptions::new().read(true).open(source).await?,
+        )),
+        ID,
+        BLOCK,
+        0,
+        events.clone(),
+    ));
+
+    let mut writer = BufWriter::new(
+        OpenOptions::new()
+            .create_new(true)
+            .write(true)
+            .open(destination)
+            .await?,
+    );
+
+    // Send the transfer and block started event
+    if let Some(events) = &events {
+        let size = std::fs::metadata(source)?.len();
+
+        events
+            .send(TransferEvent::TransferStarted {
+                id: ID,
+                path: destination.to_path_buf(),
+                blocks: 1,
+                size: Some(size),
+            })
+            .ok();
+
+        events
+            .send(TransferEvent::BlockStarted {
+                id: ID,
+                block: BLOCK,
+                size: Some(size),
+            })
+            .ok();
+    }
+
+    // Copy the reader stream to the writer stream
+    let result = tokio::select! {
+        _ = cancel.cancelled() => {
+            drop(writer);
+            std::fs::remove_file(destination).ok();
+            Err(Error::Canceled)
+        },
+        r = tokio::io::copy(&mut reader, &mut writer) => {
+            r?;
+            Ok(())
+        }
+    };
+
+    // Send the block and transfer end event
+    if let Some(events) = &events {
+        events
+            .send(TransferEvent::BlockCompleted {
+                id: ID,
+                block: BLOCK,
+                failed: result.is_err(),
+            })
+            .ok();
+
+        events
+            .send(TransferEvent::TransferCompleted {
+                id: ID,
+                failed: result.is_err(),
+            })
+            .ok();
+    }
+
+    result
+}
+
 /// Copies a source location to a destination location.
 ///
 /// A location may either be a local path or a remote URL.
@@ -451,7 +562,8 @@ pub enum TransferEvent {
 /// If authentication is required, the provided `Config` must have Google
 /// authentication information.
 ///
-/// Note that [HMAC authentication](https://cloud.google.com/storage/docs/authentication/hmackeys) is used for Google Cloud Storage access.
+/// Note that [HMAC authentication](https://cloud.google.com/storage/docs/authentication/hmackeys)
+/// is used for Google Cloud Storage access.
 pub async fn copy(
     config: Config,
     source: impl Into<Location<'_>>,
@@ -464,19 +576,17 @@ pub async fn copy(
 
     match (source, destination) {
         (Location::Path(source), Location::Path(destination)) => {
+            if destination.exists() {
+                return Err(Error::DestinationExists(destination.to_path_buf()));
+            }
+
             // Two local locations, just perform a copy
-            tokio::fs::copy(source, destination)
-                .await
-                .map(|_| ())
-                .map_err(Into::into)
+            Ok(copy_local(source, destination, cancel, events).await?)
         }
         (Location::Path(source), Location::Url(destination)) => {
             // Perform a copy if the the destination is a local path
             if let Some(destination) = destination.to_local_path()? {
-                return tokio::fs::copy(source, destination)
-                    .await
-                    .map(|_| ())
-                    .map_err(Into::into);
+                return copy_local(source, &destination, cancel, events).await;
             }
 
             if AzureBlobStorageBackend::is_supported_url(&config, &destination) {
@@ -494,16 +604,13 @@ pub async fn copy(
             }
         }
         (Location::Url(source), Location::Path(destination)) => {
-            // Perform a copy if the the source is a local path
-            if let Some(source) = source.to_local_path()? {
-                return tokio::fs::copy(source, destination)
-                    .await
-                    .map(|_| ())
-                    .map_err(Into::into);
-            }
-
             if destination.exists() {
                 return Err(Error::DestinationExists(destination.to_path_buf()));
+            }
+
+            // Perform a copy if the the source is a local path
+            if let Some(source) = source.to_local_path()? {
+                return copy_local(&source, destination, cancel, events).await;
             }
 
             if AzureBlobStorageBackend::is_supported_url(&config, &source) {
@@ -527,134 +634,10 @@ pub async fn copy(
                 (source.to_local_path()?, destination.to_local_path()?)
             {
                 // Two local locations, just perform a copy
-                return tokio::fs::copy(source, destination)
-                    .await
-                    .map(|_| ())
-                    .map_err(Into::into);
+                return copy_local(&source, &destination, cancel, events).await;
             }
 
             Err(Error::RemoteCopyNotSupported)
         }
     }
-}
-
-/// Represents statistics from transferring files.
-#[cfg(feature = "cli")]
-#[cfg_attr(docsrs, doc(cfg(feature = "cli")))]
-#[derive(Debug, Clone, Copy, Default)]
-pub struct TransferStats {
-    /// The number of files that were transferred.
-    pub files: usize,
-    /// The total number of bytes transferred for all files.
-    pub bytes: u64,
-}
-
-/// Handles events that may occur during a copy operation.
-///
-/// This is responsible for showing and updating progress bars for files
-/// being transferred.
-///
-/// Used from CLI implementations.
-#[cfg(feature = "cli")]
-#[cfg_attr(docsrs, doc(cfg(feature = "cli")))]
-pub async fn handle_events(
-    mut events: broadcast::Receiver<TransferEvent>,
-    cancel: CancellationToken,
-) -> TransferStats {
-    use std::collections::HashMap;
-
-    use tokio::sync::broadcast::error::RecvError;
-    use tracing::Span;
-    use tracing::warn_span;
-    use tracing_indicatif::span_ext::IndicatifSpanExt;
-    use tracing_indicatif::style::ProgressStyle;
-
-    struct BlockTransferState {
-        /// The size of the block being transferred.
-        size: Option<u64>,
-        /// The number of bytes that were transferred for the block.
-        transferred: u64,
-    }
-
-    struct TransferState {
-        /// The progress bar to display for a transfer.
-        bar: Span,
-        /// The total number of bytes transferred.
-        transferred: u64,
-        /// Block transfer state.
-        block_transfers: HashMap<u64, BlockTransferState>,
-    }
-
-    let mut transfers = HashMap::new();
-    let mut warned = false;
-    let mut stats = TransferStats::default();
-
-    loop {
-        tokio::select! {
-            _ = cancel.cancelled() => break,
-            event = events.recv() => match event {
-                Ok(TransferEvent::TransferStarted { id, path, size, .. }) => {
-                    let bar = warn_span!("progress");
-
-                    let style = match size {
-                        Some(size) => {
-                            bar.pb_set_length(size);
-                            ProgressStyle::with_template(
-                                "[{elapsed_precise:.cyan/blue}] {bar:40.cyan/blue} {bytes:.cyan/blue} / {total_bytes:.cyan/blue} ({bytes_per_sec:.cyan/blue}) [ETA {eta_precise:.cyan/blue}]: {msg}",
-                            ).unwrap()
-                        }
-                        None => {
-                            ProgressStyle::with_template(
-                                "[{elapsed_precise:.cyan/blue}] {spinner:.cyan/blue} {bytes:.cyan/blue} ({bytes_per_sec:.cyan/blue}): {msg}",
-                            ).unwrap()
-                        }
-                    };
-
-                    bar.pb_set_style(&style);
-                    bar.pb_set_message(path.to_str().unwrap_or("<path not UTF-8>"));
-                    bar.pb_start();
-                    transfers.insert(id, TransferState { bar, transferred: 0, block_transfers: HashMap::new() });
-                }
-                Ok(TransferEvent::BlockStarted { id, block, size }) => {
-                    if let Some(transfer) = transfers.get_mut(&id) {
-                        transfer.block_transfers.insert(block, BlockTransferState { size, transferred: 0});
-                    }
-                }
-                Ok(TransferEvent::BlockProgress { id, block, transferred }) => {
-                    if let Some(transfer) = transfers.get_mut(&id)
-                        && let Some(block) = transfer.block_transfers.get_mut(&block) {
-                            transfer.transferred += transferred - block.transferred;
-                            block.transferred = transferred;
-                            transfer.bar.pb_set_position(transfer.transferred);
-                        }
-                }
-                Ok(TransferEvent::BlockCompleted { id, block, failed }) => {
-                    if let Some(transfer) = transfers.get_mut(&id)
-                        && let Some(block) = transfer.block_transfers.get_mut(&block) {
-                            transfer.transferred -= block.transferred;
-                            if !failed && let Some(size) = block.size {
-                                transfer.transferred += size;
-                            }
-
-                            transfer.bar.pb_set_position(transfer.transferred);
-                        }
-                }
-                Ok(TransferEvent::TransferCompleted { id, failed }) => {
-                    if !failed && let Some(transfer) = transfers.remove(&id) {
-                        stats.files += 1;
-                        stats.bytes +=  transfer.transferred;
-                    }
-                }
-                Err(RecvError::Closed) => break,
-                Err(RecvError::Lagged(_)) => {
-                    if !warned {
-                        warn!("event stream is lagging: progress may be incorrect");
-                        warned = true;
-                    }
-                }
-            }
-        }
-    }
-
-    stats
 }

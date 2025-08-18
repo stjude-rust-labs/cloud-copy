@@ -12,6 +12,8 @@ use futures::FutureExt;
 use futures::StreamExt;
 use futures::TryStreamExt;
 use futures::stream;
+use http_cache_stream_reqwest::CacheStorage;
+use http_cache_stream_reqwest::X_CACHE_DIGEST;
 use reqwest::StatusCode;
 use reqwest::header;
 use tempfile::NamedTempFile;
@@ -25,6 +27,7 @@ use tokio_util::io::StreamReader;
 use tokio_util::sync::CancellationToken;
 use tracing::debug;
 use tracing::info;
+use tracing::warn;
 use url::Url;
 use walkdir::WalkDir;
 
@@ -37,6 +40,16 @@ use crate::backend::Upload;
 use crate::notify_retry;
 use crate::pool::BufferPool;
 use crate::streams::TransferStream;
+
+/// Gets the next transfer id.
+fn next_id() -> u64 {
+    /// The next transfer identifier.
+    ///
+    /// This is monotonically increasing across all file transfers.
+    static NEXT_ID: AtomicU64 = AtomicU64::new(0);
+
+    NEXT_ID.fetch_add(1, Ordering::SeqCst)
+}
 
 /// Represents information about a file being uploaded.
 #[derive(Clone, Copy)]
@@ -57,19 +70,12 @@ struct FileTransferInner<B> {
     backend: B,
     /// The buffer pool for buffering blocks before writing them to disk.
     pool: BufferPool,
-    /// Stores the next transfer id to use for events.
-    next_id: AtomicU64,
 }
 
 impl<B> FileTransferInner<B>
 where
     B: StorageBackend + Send + Sync + 'static,
 {
-    /// Gets the next transfer id.
-    fn next_id(&self) -> u64 {
-        self.next_id.fetch_add(1, Ordering::SeqCst)
-    }
-
     /// Downloads a file to the given destination path.
     async fn download(
         &self,
@@ -98,7 +104,7 @@ where
         )
         .await?;
 
-        let id = self.next_id();
+        let id = next_id();
 
         // Check for a strong etag
         let etag = response
@@ -130,22 +136,16 @@ where
                 })?;
 
             // Use a temp file that will be atomically renamed when the download completes
-            let temp = NamedTempFile::with_prefix_in(".", parent)
-                .map_err(|error| Error::CreateTempFile { error })?;
+            let temp = NamedTempFile::with_prefix_in(".copy", parent)
+                .map_err(|error| Error::CreateTempFile { error })?
+                .into_temp_path();
 
             // Download the file with resumable retries
-            self.download_with_resume(
-                id,
-                &source,
-                temp.path(),
-                content_length,
-                etag,
-                cancel.clone(),
-            )
-            .await?;
+            self.download_with_resume(id, &source, &temp, content_length, etag, cancel.clone())
+                .await?;
 
             // Persist the temp file to the destination
-            temp.persist(destination)
+            temp.persist_noclobber(destination)
                 .map_err(|e| Error::PersistTempFile { error: e.error })?;
 
             Ok(())
@@ -208,7 +208,39 @@ where
                             .get_at_offset(source.clone(), etag, current)
                             .await?
                     } else {
-                        self.backend.get(source.clone()).await?
+                        let response = self.backend.get(source.clone()).await?;
+
+                        // Check to see if we should link to the cache location
+                        if self.backend.config().link_to_cache
+                            && let Some(digest) = response
+                                .headers()
+                                .get(X_CACHE_DIGEST)
+                                .and_then(|v| v.to_str().ok())
+                            && let Some(cache) = self.backend.cache()
+                        {
+                            let path = cache.storage().body_path(digest);
+                            if path.is_file() {
+                                // Remove the existing temp file and replace it with a hard link
+                                fs::remove_file(destination).await.ok();
+                                match fs::hard_link(&path, destination).await {
+                                    Ok(_) => {
+                                        debug!(
+                                            "created a hard link from cache location `{path}`",
+                                            path = path.display(),
+                                        );
+                                        return Ok(());
+                                    }
+                                    Err(e) => {
+                                        warn!(
+                                            "failed to create a hard link to cached file \
+                                             (performing a copy instead): {e}"
+                                        );
+                                    }
+                                }
+                            }
+                        }
+
+                        response
                     };
 
                     // If the response is not partial, start from the beginning
@@ -485,11 +517,7 @@ where
     pub fn new(backend: B, cancel: CancellationToken) -> Self {
         let pool = BufferPool::new(backend.config().parallelism());
         Self {
-            inner: Arc::new(FileTransferInner {
-                backend,
-                pool,
-                next_id: AtomicU64::new(0),
-            }),
+            inner: Arc::new(FileTransferInner { backend, pool }),
             cancel,
         }
     }
@@ -619,7 +647,7 @@ where
             file_size.div_ceil(block_size)
         };
 
-        let id = self.inner.next_id();
+        let id = next_id();
 
         debug!(
             "file `{source}` is {file_size} bytes and will be uploaded with {num_blocks} block(s) \

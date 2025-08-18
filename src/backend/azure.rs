@@ -6,6 +6,8 @@ use base64::Engine;
 use base64::prelude::BASE64_STANDARD;
 use chrono::Utc;
 use crc64fast_nvme::Digest;
+use http_cache_stream_reqwest::Cache;
+use http_cache_stream_reqwest::storage::DefaultCacheStorage;
 use reqwest::Body;
 use reqwest::Response;
 use reqwest::StatusCode;
@@ -303,6 +305,10 @@ pub struct AzureBlobStorageBackend {
     config: Config,
     /// The HTTP client to use for transferring files.
     client: ClientWithMiddleware,
+    /// The HTTP cache used by the client.
+    ///
+    /// This is `None` if caching is not enabled.
+    cache: Option<Arc<Cache<DefaultCacheStorage>>>,
     /// The channel for sending transfer events.
     events: Option<broadcast::Sender<TransferEvent>>,
 }
@@ -311,10 +317,11 @@ impl AzureBlobStorageBackend {
     /// Constructs a new Azure Blob Storage backend with the given configuration
     /// and events channel.
     pub fn new(config: Config, events: Option<broadcast::Sender<TransferEvent>>) -> Self {
-        let client = new_http_client(&config);
+        let (client, cache) = new_http_client(&config);
         Self {
             config,
             client,
+            cache,
             events,
         }
     }
@@ -325,6 +332,10 @@ impl StorageBackend for AzureBlobStorageBackend {
 
     fn config(&self) -> &Config {
         &self.config
+    }
+
+    fn cache(&self) -> Option<&Cache<DefaultCacheStorage>> {
+        self.cache.as_deref()
     }
 
     fn events(&self) -> &Option<broadcast::Sender<TransferEvent>> {
