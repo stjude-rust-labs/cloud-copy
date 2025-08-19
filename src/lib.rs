@@ -1,10 +1,10 @@
 //! Cloud storage copy utility.
 //!
-//! The `cloud` crate offers a simple API for transferring files to and from
-//! Azure Blob Storage, Amazon S3, and Google Cloud Storage.
+//! The `cloud-copy` crate offers a simple API for transferring files to and
+//! from Azure Blob Storage, Amazon S3, and Google Cloud Storage.
 //!
-//! It exports only a single function named [`copy`] which is responsible for
-//! copying a source to a destination.
+//! It exports a function named [`copy`] which is responsible for copying a
+//! source to a destination.
 //!
 //! An optional transfer event stream provided to the [`copy`] function can be
 //! used to display transfer progress.
@@ -44,7 +44,6 @@ use url::Url;
 use crate::backend::StorageBackend;
 use crate::backend::azure::AzureBlobStorageBackend;
 use crate::backend::generic::GenericStorageBackend;
-use crate::backend::google::GoogleError;
 use crate::backend::google::GoogleStorageBackend;
 use crate::backend::s3::S3StorageBackend;
 use crate::streams::TransferStream;
@@ -62,6 +61,7 @@ mod streams;
 mod transfer;
 
 pub use backend::azure::AzureError;
+pub use backend::google::GoogleError;
 pub use backend::s3::S3Error;
 pub use config::*;
 pub use generator::*;
