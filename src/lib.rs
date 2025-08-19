@@ -44,7 +44,6 @@ use url::Url;
 use crate::backend::StorageBackend;
 use crate::backend::azure::AzureBlobStorageBackend;
 use crate::backend::generic::GenericStorageBackend;
-use crate::backend::google::GoogleError;
 use crate::backend::google::GoogleStorageBackend;
 use crate::backend::s3::S3StorageBackend;
 use crate::streams::TransferStream;
@@ -62,6 +61,7 @@ mod streams;
 mod transfer;
 
 pub use backend::azure::AzureError;
+pub use backend::google::GoogleError;
 pub use backend::s3::S3Error;
 pub use config::*;
 pub use generator::*;
