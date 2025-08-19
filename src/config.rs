@@ -1,7 +1,6 @@
 //! Implementation of cloud configuration.
 
 use std::num::NonZero;
-use std::path::PathBuf;
 use std::thread::available_parallelism;
 use std::time::Duration;
 
@@ -83,11 +82,6 @@ pub struct GoogleConfig {
 /// Configuration used in a cloud copy operation.
 #[derive(Debug, Clone, Default, Deserialize)]
 pub struct Config {
-    /// The cache directory to use for downloads.
-    ///
-    /// If `None`, downloads will not use a cache.
-    #[serde(default)]
-    pub cache_dir: Option<PathBuf>,
     /// If `link_to_cache` is `true`, then a downloaded file that is already
     /// present (and fresh) in the cache will be hard linked at the requested
     /// destination instead of copied.

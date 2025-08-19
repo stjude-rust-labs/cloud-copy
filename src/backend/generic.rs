@@ -2,8 +2,6 @@
 //!
 //! The generic storage backend can only be used for downloading files.
 
-use std::sync::Arc;
-
 use bytes::Bytes;
 use chrono::Utc;
 use http_cache_stream_reqwest::Cache;
@@ -11,20 +9,19 @@ use http_cache_stream_reqwest::storage::DefaultCacheStorage;
 use reqwest::Response;
 use reqwest::StatusCode;
 use reqwest::header;
-use reqwest_middleware::ClientWithMiddleware;
 use tokio::sync::broadcast;
 use tracing::debug;
 use url::Url;
 
 use crate::Config;
 use crate::Error;
+use crate::HttpClient;
 use crate::Result;
 use crate::TransferEvent;
 use crate::USER_AGENT;
 use crate::UrlExt;
 use crate::backend::StorageBackend;
 use crate::backend::Upload;
-use crate::new_http_client;
 
 /// Helper trait for converting responses into `Error`.
 trait IntoError {
@@ -72,11 +69,7 @@ pub struct GenericStorageBackend {
     /// The configuration to use for transferring files.
     config: Config,
     /// The HTTP client to use for transferring files.
-    client: ClientWithMiddleware,
-    /// The HTTP cache used by the client.
-    ///
-    /// This is `None` if caching is not enabled.
-    cache: Option<Arc<Cache<DefaultCacheStorage>>>,
+    client: HttpClient,
     /// The channel for sending transfer events.
     events: Option<broadcast::Sender<TransferEvent>>,
 }
@@ -84,12 +77,14 @@ pub struct GenericStorageBackend {
 impl GenericStorageBackend {
     /// Constructs a new generic storage backend with the given configuration
     /// and events channel.
-    pub fn new(config: Config, events: Option<broadcast::Sender<TransferEvent>>) -> Self {
-        let (client, cache) = new_http_client(&config);
+    pub fn new(
+        config: Config,
+        client: HttpClient,
+        events: Option<broadcast::Sender<TransferEvent>>,
+    ) -> Self {
         Self {
             config,
             client,
-            cache,
             events,
         }
     }
@@ -103,7 +98,7 @@ impl StorageBackend for GenericStorageBackend {
     }
 
     fn cache(&self) -> Option<&Cache<DefaultCacheStorage>> {
-        self.cache.as_deref()
+        self.client.cache()
     }
 
     fn events(&self) -> &Option<broadcast::Sender<TransferEvent>> {

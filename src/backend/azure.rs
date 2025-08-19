@@ -12,7 +12,6 @@ use reqwest::Body;
 use reqwest::Response;
 use reqwest::StatusCode;
 use reqwest::header;
-use reqwest_middleware::ClientWithMiddleware;
 use serde::Deserialize;
 use serde::Serialize;
 use tokio::sync::broadcast;
@@ -22,6 +21,7 @@ use url::Url;
 use crate::BLOCK_SIZE_THRESHOLD;
 use crate::Config;
 use crate::Error;
+use crate::HttpClient;
 use crate::ONE_MEBIBYTE;
 use crate::Result;
 use crate::TransferEvent;
@@ -30,7 +30,6 @@ use crate::UrlExt;
 use crate::backend::StorageBackend;
 use crate::backend::Upload;
 use crate::generator::Alphanumeric;
-use crate::new_http_client;
 use crate::streams::ByteStream;
 use crate::streams::TransferStream;
 
@@ -179,7 +178,7 @@ impl ResponseExt for Response {
 /// Represents an upload of a blob to Azure Blob Storage.
 pub struct AzureBlobUpload {
     /// The HTTP client to use for the upload.
-    client: ClientWithMiddleware,
+    client: HttpClient,
     /// The blob URL.
     url: Url,
     /// The Azure block id.
@@ -191,7 +190,7 @@ pub struct AzureBlobUpload {
 impl AzureBlobUpload {
     /// Constructs a new blob upload.
     fn new(
-        client: ClientWithMiddleware,
+        client: HttpClient,
         url: Url,
         block_id: Arc<String>,
         events: Option<broadcast::Sender<TransferEvent>>,
@@ -304,11 +303,7 @@ pub struct AzureBlobStorageBackend {
     /// The config to use for transferring files.
     config: Config,
     /// The HTTP client to use for transferring files.
-    client: ClientWithMiddleware,
-    /// The HTTP cache used by the client.
-    ///
-    /// This is `None` if caching is not enabled.
-    cache: Option<Arc<Cache<DefaultCacheStorage>>>,
+    client: HttpClient,
     /// The channel for sending transfer events.
     events: Option<broadcast::Sender<TransferEvent>>,
 }
@@ -316,12 +311,14 @@ pub struct AzureBlobStorageBackend {
 impl AzureBlobStorageBackend {
     /// Constructs a new Azure Blob Storage backend with the given configuration
     /// and events channel.
-    pub fn new(config: Config, events: Option<broadcast::Sender<TransferEvent>>) -> Self {
-        let (client, cache) = new_http_client(&config);
+    pub fn new(
+        config: Config,
+        client: HttpClient,
+        events: Option<broadcast::Sender<TransferEvent>>,
+    ) -> Self {
         Self {
             config,
             client,
-            cache,
             events,
         }
     }
@@ -335,7 +332,7 @@ impl StorageBackend for AzureBlobStorageBackend {
     }
 
     fn cache(&self) -> Option<&Cache<DefaultCacheStorage>> {
-        self.cache.as_deref()
+        self.client.cache()
     }
 
     fn events(&self) -> &Option<broadcast::Sender<TransferEvent>> {

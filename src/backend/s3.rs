@@ -13,7 +13,6 @@ use reqwest::Response;
 use reqwest::StatusCode;
 use reqwest::header;
 use reqwest::header::HeaderValue;
-use reqwest_middleware::ClientWithMiddleware;
 use secrecy::ExposeSecret;
 use serde::Deserialize;
 use serde::Serialize;
@@ -24,6 +23,7 @@ use url::Url;
 use crate::BLOCK_SIZE_THRESHOLD;
 use crate::Config;
 use crate::Error;
+use crate::HttpClient;
 use crate::ONE_MEBIBYTE;
 use crate::Result;
 use crate::S3AuthConfig;
@@ -35,7 +35,6 @@ use crate::backend::Upload;
 use crate::backend::auth::RequestSigner;
 use crate::backend::auth::SignatureProvider;
 use crate::backend::auth::sha256_hex_string;
-use crate::new_http_client;
 use crate::streams::ByteStream;
 use crate::streams::TransferStream;
 
@@ -334,7 +333,7 @@ pub struct S3Upload {
     /// The configuration to use for the upload.
     config: Arc<Config>,
     /// The HTTP client to use for uploading.
-    client: ClientWithMiddleware,
+    client: HttpClient,
     /// The URL of the object being uploaded.
     url: Url,
     /// The identifier of this upload.
@@ -464,23 +463,21 @@ pub struct S3StorageBackend {
     /// The config to use for transferring files.
     config: Arc<Config>,
     /// The HTTP client to use for transferring files.
-    client: ClientWithMiddleware,
-    /// The HTTP cache used by the client.
-    ///
-    /// This is `None` if caching is not enabled.
-    cache: Option<Arc<Cache<DefaultCacheStorage>>>,
+    client: HttpClient,
     /// The channel for sending transfer events.
     events: Option<broadcast::Sender<TransferEvent>>,
 }
 
 impl S3StorageBackend {
     /// Constructs a new S3 storage backend.
-    pub fn new(config: Config, events: Option<broadcast::Sender<TransferEvent>>) -> Self {
-        let (client, cache) = new_http_client(&config);
+    pub fn new(
+        config: Config,
+        client: HttpClient,
+        events: Option<broadcast::Sender<TransferEvent>>,
+    ) -> Self {
         Self {
             config: Arc::new(config),
             client,
-            cache,
             events,
         }
     }
@@ -494,7 +491,7 @@ impl StorageBackend for S3StorageBackend {
     }
 
     fn cache(&self) -> Option<&Cache<DefaultCacheStorage>> {
-        self.cache.as_deref()
+        self.client.cache()
     }
 
     fn events(&self) -> &Option<broadcast::Sender<TransferEvent>> {

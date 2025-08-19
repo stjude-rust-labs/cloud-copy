@@ -7,6 +7,11 @@ use rand::Rng as _;
 /// An alphanumeric string generator.
 ///
 /// Every display of the generator will create a new random alphanumeric string.
+///
+/// By default, the displayed string will use all alphanumeric characters.
+///
+/// Use the alternate format (i.e. `{:#}`) to use only lowercase alphanumeric
+/// characters.
 #[derive(Clone, Copy)]
 pub struct Alphanumeric {
     /// The length of the alphanumeric string.
@@ -29,10 +34,11 @@ impl Default for Alphanumeric {
 
 impl fmt::Display for Alphanumeric {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let lowercase = f.alternate();
         for c in rand::rng()
             .sample_iter(&rand::distr::Alphanumeric)
             .take(self.length)
-            .map(|c| c.to_ascii_lowercase())
+            .map(|c| if lowercase { c.to_ascii_lowercase() } else { c })
         {
             write!(f, "{c}", c = c as char)?;
         }
