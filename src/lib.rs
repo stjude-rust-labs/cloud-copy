@@ -1,10 +1,10 @@
 //! Cloud storage copy utility.
 //!
-//! The `cloud` crate offers a simple API for transferring files to and from
-//! Azure Blob Storage, Amazon S3, and Google Cloud Storage.
+//! The `cloud-copy` crate offers a simple API for transferring files to and
+//! from Azure Blob Storage, Amazon S3, and Google Cloud Storage.
 //!
-//! It exports only a single function named [`copy`] which is responsible for
-//! copying a source to a destination.
+//! It exports a function named [`copy`] which is responsible for copying a
+//! source to a destination.
 //!
 //! An optional transfer event stream provided to the [`copy`] function can be
 //! used to display transfer progress.
