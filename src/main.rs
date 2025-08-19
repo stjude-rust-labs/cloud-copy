@@ -16,6 +16,7 @@ use cloud_copy::AzureConfig;
 use cloud_copy::Config;
 use cloud_copy::GoogleAuthConfig;
 use cloud_copy::GoogleConfig;
+use cloud_copy::HttpClient;
 use cloud_copy::Location;
 use cloud_copy::S3AuthConfig;
 use cloud_copy::S3Config;
@@ -101,8 +102,9 @@ struct Args {
 }
 
 impl Args {
-    /// Converts the arguments into a `Config`, source, and destination.
-    fn into_parts(self) -> (Config, String, String) {
+    /// Converts the arguments into a `Config`, HTTP client, source, and
+    /// destination.
+    fn into_parts(self) -> (Config, HttpClient, String, String) {
         let s3_auth =
             if let (Some(id), Some(key)) = (self.aws_access_key_id, self.aws_secret_access_key) {
                 Some(S3AuthConfig {
@@ -122,7 +124,6 @@ impl Args {
         };
 
         let config = Config {
-            cache_dir: self.cache_dir,
             link_to_cache: self.link_to_cache,
             block_size: self.block_size,
             parallelism: self.parallelism,
@@ -136,7 +137,12 @@ impl Args {
             google: GoogleConfig { auth: google_auth },
         };
 
-        (config, self.source, self.destination)
+        let client = self
+            .cache_dir
+            .map(HttpClient::new_with_cache)
+            .unwrap_or_default();
+
+        (config, client, self.source, self.destination)
     }
 }
 
@@ -177,16 +183,23 @@ async fn run(cancel: CancellationToken) -> Result<()> {
 
     let start = Utc::now();
 
-    let (config, source, destination) = args.into_parts();
-    let result = copy(config, &source, &destination, cancel, Some(events_tx))
-        .await
-        .with_context(|| {
-            format!(
-                "failed to copy `{source}` to `{destination}`",
-                source = Location::new(&source),
-                destination = Location::new(&destination),
-            )
-        });
+    let (config, client, source, destination) = args.into_parts();
+    let result = copy(
+        config,
+        client,
+        &source,
+        &destination,
+        cancel,
+        Some(events_tx),
+    )
+    .await
+    .with_context(|| {
+        format!(
+            "failed to copy `{source}` to `{destination}`",
+            source = Location::new(&source),
+            destination = Location::new(&destination),
+        )
+    });
 
     let end = Utc::now();
 

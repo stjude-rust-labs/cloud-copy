@@ -17,6 +17,7 @@
 #![cfg_attr(docsrs, feature(doc_cfg))]
 
 use std::fmt;
+use std::ops::Deref;
 use std::path::Path;
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -197,43 +198,88 @@ impl UrlExt for Url {
     }
 }
 
-/// Constructs a new HTTP client with default options.
-///
-/// If caching is enabled in the provided configuration, the cache used to
-/// configure the client is returned.
-fn new_http_client(
-    config: &Config,
-) -> (
-    ClientWithMiddleware,
-    Option<Arc<Cache<DefaultCacheStorage>>>,
-) {
-    /// The timeout for the connecting phase of the client.
+/// Represents a client to use for making HTTP requests.
+#[derive(Clone)]
+pub struct HttpClient {
+    /// The underlying HTTP client.
+    client: ClientWithMiddleware,
+    /// The cache to use for storing previous requests.
+    ///
+    /// If `None`, the client is not using a cache.
+    cache: Option<Arc<Cache<DefaultCacheStorage>>>,
+}
+
+impl HttpClient {
     const DEFAULT_CONNECT_TIMEOUT: Duration = Duration::from_secs(60);
-    /// The timeout for a read of the client.
     const DEFAULT_READ_TIMEOUT: Duration = Duration::from_secs(60);
 
-    let mut builder = ClientBuilder::new(
-        Client::builder()
-            .connect_timeout(DEFAULT_CONNECT_TIMEOUT)
-            .read_timeout(DEFAULT_READ_TIMEOUT)
+    /// Constructs a new HTTP client.
+    pub fn new() -> Self {
+        let client = Client::builder()
+            .connect_timeout(Self::DEFAULT_CONNECT_TIMEOUT)
+            .read_timeout(Self::DEFAULT_READ_TIMEOUT)
             .build()
-            .expect("failed to build HTTP client"),
-    );
+            .expect("failed to build HTTP client");
 
-    let cache = if let Some(cache_dir) = &config.cache_dir {
+        Self::from_existing(client)
+    }
+
+    /// Constructs a new HTTP client using the given cache directory.
+    pub fn new_with_cache(cache_dir: impl AsRef<Path>) -> Self {
+        let client = Client::builder()
+            .connect_timeout(Self::DEFAULT_CONNECT_TIMEOUT)
+            .read_timeout(Self::DEFAULT_READ_TIMEOUT)
+            .build()
+            .expect("failed to build HTTP client");
+
+        Self::from_existing_with_cache(client, cache_dir)
+    }
+
+    /// Constructs a new HTTP client using an existing client.
+    pub fn from_existing(client: reqwest::Client) -> Self {
+        Self {
+            client: ClientWithMiddleware::new(client, Vec::new()),
+            cache: None,
+        }
+    }
+
+    /// Constructs a new HTTP client using an existing client and the given
+    /// cache directory.
+    pub fn from_existing_with_cache(client: reqwest::Client, cache_dir: impl AsRef<Path>) -> Self {
+        let cache_dir = cache_dir.as_ref();
         info!(
             "using HTTP download cache directory `{dir}`",
             dir = cache_dir.display()
         );
 
         let cache = Arc::new(Cache::new(DefaultCacheStorage::new(cache_dir)));
-        builder = builder.with_arc(cache.clone());
-        Some(cache)
-    } else {
-        None
-    };
 
-    (builder.build(), cache)
+        Self {
+            client: ClientBuilder::new(client).with_arc(cache.clone()).build(),
+            cache: Some(cache),
+        }
+    }
+
+    /// Gets the associated cache.
+    ///
+    /// If `None`, the client is not configured for caching.
+    pub fn cache(&self) -> Option<&Cache<DefaultCacheStorage>> {
+        self.cache.as_deref()
+    }
+}
+
+impl Default for HttpClient {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl Deref for HttpClient {
+    type Target = ClientWithMiddleware;
+
+    fn deref(&self) -> &Self::Target {
+        &self.client
+    }
 }
 
 /// Helper for displaying a message in `Error`.
@@ -566,6 +612,7 @@ async fn copy_local(
 /// is used for Google Cloud Storage access.
 pub async fn copy(
     config: Config,
+    client: HttpClient,
     source: impl Into<Location<'_>>,
     destination: impl Into<Location<'_>>,
     cancel: CancellationToken,
@@ -591,13 +638,15 @@ pub async fn copy(
 
             if AzureBlobStorageBackend::is_supported_url(&config, &destination) {
                 let transfer =
-                    FileTransfer::new(AzureBlobStorageBackend::new(config, events), cancel);
+                    FileTransfer::new(AzureBlobStorageBackend::new(config, client, events), cancel);
                 transfer.upload(source, destination).await
             } else if S3StorageBackend::is_supported_url(&config, &destination) {
-                let transfer = FileTransfer::new(S3StorageBackend::new(config, events), cancel);
+                let transfer =
+                    FileTransfer::new(S3StorageBackend::new(config, client, events), cancel);
                 transfer.upload(source, destination).await
             } else if GoogleStorageBackend::is_supported_url(&config, &destination) {
-                let transfer = FileTransfer::new(GoogleStorageBackend::new(config, events), cancel);
+                let transfer =
+                    FileTransfer::new(GoogleStorageBackend::new(config, client, events), cancel);
                 transfer.upload(source, destination).await
             } else {
                 Err(Error::UnsupportedUrl(destination))
@@ -615,17 +664,19 @@ pub async fn copy(
 
             if AzureBlobStorageBackend::is_supported_url(&config, &source) {
                 let transfer =
-                    FileTransfer::new(AzureBlobStorageBackend::new(config, events), cancel);
+                    FileTransfer::new(AzureBlobStorageBackend::new(config, client, events), cancel);
                 transfer.download(source, destination).await
             } else if S3StorageBackend::is_supported_url(&config, &source) {
-                let transfer = FileTransfer::new(S3StorageBackend::new(config, events), cancel);
+                let transfer =
+                    FileTransfer::new(S3StorageBackend::new(config, client, events), cancel);
                 transfer.download(source, destination).await
             } else if GoogleStorageBackend::is_supported_url(&config, &source) {
-                let transfer = FileTransfer::new(GoogleStorageBackend::new(config, events), cancel);
+                let transfer =
+                    FileTransfer::new(GoogleStorageBackend::new(config, client, events), cancel);
                 transfer.download(source, destination).await
             } else {
                 let transfer =
-                    FileTransfer::new(GenericStorageBackend::new(config, events), cancel);
+                    FileTransfer::new(GenericStorageBackend::new(config, client, events), cancel);
                 transfer.download(source, destination).await
             }
         }

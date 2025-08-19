@@ -10,6 +10,7 @@ use anyhow::bail;
 use cloud_copy::Alphanumeric;
 use cloud_copy::AzureConfig;
 use cloud_copy::Config;
+use cloud_copy::HttpClient;
 use cloud_copy::S3AuthConfig;
 use cloud_copy::S3Config;
 use futures::FutureExt;
@@ -184,6 +185,7 @@ fn config() -> Config {
 /// downloading it again.
 async fn roundtrip_file(test: &str, size: usize) -> Result<()> {
     let config = config();
+    let client = HttpClient::default();
     let cancel = CancellationToken::new();
 
     // Create a new temp file of the specified size
@@ -201,15 +203,23 @@ async fn roundtrip_file(test: &str, size: usize) -> Result<()> {
 
     for url in urls(test) {
         // Copy the local file to the cloud
-        cloud_copy::copy(config.clone(), &*source, url.clone(), cancel.clone(), None)
-            .await
-            .context("failed to upload file")?;
+        cloud_copy::copy(
+            config.clone(),
+            client.clone(),
+            &*source,
+            url.clone(),
+            cancel.clone(),
+            None,
+        )
+        .await
+        .context("failed to upload file")?;
 
         // Copy the file from the cloud to a local file (delete it first in case it
         // exists)
         fs::remove_file(&destination).context("failed to delete destination file")?;
         cloud_copy::copy(
             config.clone(),
+            client.clone(),
             url.clone(),
             &*destination,
             cancel.clone(),
@@ -244,6 +254,7 @@ async fn copy_generic_url() -> Result<()> {
     let cancel = CancellationToken::new();
     cloud_copy::copy(
         config(),
+        Default::default(),
         "https://example.com",
         &*destination,
         cancel.clone(),
@@ -304,11 +315,13 @@ async fn roundtrip_directory() -> Result<()> {
         .context("failed to populate temporary directory")?;
 
     let config = config();
+    let client = HttpClient::default();
     let cancel = CancellationToken::new();
     for url in urls(&test) {
         // Copy the local directory to the cloud
         cloud_copy::copy(
             config.clone(),
+            client.clone(),
             source.path(),
             url.clone(),
             cancel.clone(),
@@ -322,6 +335,7 @@ async fn roundtrip_directory() -> Result<()> {
         fs::remove_dir_all(destination.path()).context("failed to delete destination directory")?;
         cloud_copy::copy(
             config.clone(),
+            client.clone(),
             url.clone(),
             destination.path(),
             cancel.clone(),
@@ -399,12 +413,12 @@ async fn link_to_cache() -> Result<()> {
 
     let cancel = CancellationToken::new();
 
+    let client = HttpClient::new_with_cache(&cache_dir);
+
     // Download the file (and cache it)
     cloud_copy::copy(
-        Config {
-            cache_dir: Some(cache_dir.path().to_path_buf()),
-            ..Default::default()
-        },
+        Default::default(),
+        client.clone(),
         "https://example.com",
         &*destination,
         cancel.clone(),
@@ -419,10 +433,8 @@ async fn link_to_cache() -> Result<()> {
 
     // Download the file again (it'll copy from the cache)
     cloud_copy::copy(
-        Config {
-            cache_dir: Some(cache_dir.path().to_path_buf()),
-            ..Default::default()
-        },
+        Default::default(),
+        client.clone(),
         "https://example.com",
         &*destination,
         cancel.clone(),
@@ -445,10 +457,10 @@ async fn link_to_cache() -> Result<()> {
     // Download the file again (it'll link from the cache)
     cloud_copy::copy(
         Config {
-            cache_dir: Some(cache_dir.path().to_path_buf()),
             link_to_cache: true,
             ..Default::default()
         },
+        client,
         "https://example.com",
         &*destination,
         cancel,
