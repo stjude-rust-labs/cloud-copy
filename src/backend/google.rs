@@ -1,5 +1,6 @@
 //! Implementation of the Google Cloud Storage backend.
 
+use std::borrow::Cow;
 use std::sync::Arc;
 
 use bytes::Bytes;
@@ -499,7 +500,7 @@ impl StorageBackend for GoogleStorageBackend {
         }
     }
 
-    fn rewrite_url(&self, url: Url) -> Result<Url> {
+    fn rewrite_url<'a>(_: &Config, url: &'a Url) -> Result<Cow<'a, Url>> {
         match url.scheme() {
             "gs" => {
                 let bucket = url.host_str().ok_or(GoogleError::InvalidScheme)?;
@@ -522,13 +523,16 @@ impl StorageBackend for GoogleStorageBackend {
                     }
                 }
                 .parse()
+                .map(Cow::Owned)
                 .map_err(|_| GoogleError::InvalidScheme.into())
             }
-            _ => Ok(url),
+            _ => Ok(Cow::Borrowed(url)),
         }
     }
 
-    fn join_url<'a>(&self, mut url: Url, segments: impl Iterator<Item = &'a str>) -> Result<Url> {
+    fn join_url<'a>(&self, url: &Url, segments: impl Iterator<Item = &'a str>) -> Result<Url> {
+        let mut url = url.clone();
+
         // Append on the segments
         {
             let mut existing = url.path_segments_mut().expect("url should have path");
@@ -539,9 +543,9 @@ impl StorageBackend for GoogleStorageBackend {
         Ok(url)
     }
 
-    async fn head(&self, url: Url) -> Result<Response> {
+    async fn head(&self, url: &Url) -> Result<Response> {
         debug_assert!(
-            Self::is_supported_url(&self.config, &url),
+            Self::is_supported_url(&self.config, url),
             "{url} is not a supported GCS URL",
             url = url.as_str()
         );
@@ -551,7 +555,7 @@ impl StorageBackend for GoogleStorageBackend {
         let date = Utc::now();
         let mut request = self
             .client
-            .head(url)
+            .head(url.clone())
             .header(header::USER_AGENT, USER_AGENT)
             .header(
                 GOOGLE_DATE_HEADER,
@@ -572,9 +576,9 @@ impl StorageBackend for GoogleStorageBackend {
         Ok(response)
     }
 
-    async fn get(&self, url: Url) -> Result<Response> {
+    async fn get(&self, url: &Url) -> Result<Response> {
         debug_assert!(
-            Self::is_supported_url(&self.config, &url),
+            Self::is_supported_url(&self.config, url),
             "{url} is not a supported GCS URL",
             url = url.as_str()
         );
@@ -584,7 +588,7 @@ impl StorageBackend for GoogleStorageBackend {
         let date = Utc::now();
         let mut request = self
             .client
-            .get(url)
+            .get(url.clone())
             .header(header::USER_AGENT, USER_AGENT)
             .header(
                 GOOGLE_DATE_HEADER,
@@ -605,9 +609,9 @@ impl StorageBackend for GoogleStorageBackend {
         Ok(response)
     }
 
-    async fn get_at_offset(&self, url: Url, etag: &str, offset: u64) -> Result<Response> {
+    async fn get_at_offset(&self, url: &Url, etag: &str, offset: u64) -> Result<Response> {
         debug_assert!(
-            Self::is_supported_url(&self.config, &url),
+            Self::is_supported_url(&self.config, url),
             "{url} is not a supported GCS URL",
             url = url.as_str()
         );
@@ -621,7 +625,7 @@ impl StorageBackend for GoogleStorageBackend {
 
         let mut request = self
             .client
-            .get(url)
+            .get(url.clone())
             .header(header::USER_AGENT, USER_AGENT)
             .header(
                 GOOGLE_DATE_HEADER,
@@ -657,11 +661,11 @@ impl StorageBackend for GoogleStorageBackend {
         Ok(response)
     }
 
-    async fn walk(&self, mut url: Url) -> Result<Vec<String>> {
+    async fn walk(&self, url: &Url) -> Result<Vec<String>> {
         // See: https://cloud.google.com/storage/docs/xml-api/get-bucket-list
 
         debug_assert!(
-            Self::is_supported_url(&self.config, &url),
+            Self::is_supported_url(&self.config, url),
             "{url} is not a supported GCS URL",
             url = url.as_str()
         );
@@ -675,6 +679,7 @@ impl StorageBackend for GoogleStorageBackend {
         prefix.push('/');
 
         // Format the request to always use the virtual-host style URL
+        let mut url = url.clone();
         url.set_host(Some(&format!("{bucket}.{GOOGLE_ROOT_DOMAIN}")))
             .map_err(|_| GoogleError::InvalidBucketName)?;
         url.set_path("/");
@@ -754,11 +759,11 @@ impl StorageBackend for GoogleStorageBackend {
         Ok(paths)
     }
 
-    async fn new_upload(&self, url: Url) -> Result<Self::Upload> {
+    async fn new_upload(&self, url: &Url) -> Result<Self::Upload> {
         // See: https://cloud.google.com/storage/docs/xml-api/post-object-multipart
 
         debug_assert!(
-            Self::is_supported_url(&self.config, &url),
+            Self::is_supported_url(&self.config, url),
             "{url} is not a supported GCS URL",
             url = url.as_str()
         );
@@ -812,7 +817,7 @@ impl StorageBackend for GoogleStorageBackend {
         Ok(GoogleUpload {
             config: self.config.clone(),
             client: self.client.clone(),
-            url,
+            url: url.clone(),
             id,
             events: self.events.clone(),
         })

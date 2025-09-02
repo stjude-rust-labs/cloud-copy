@@ -1,5 +1,7 @@
 //! Implementation of storage backends.
 
+use std::borrow::Cow;
+
 use bytes::Bytes;
 use http_cache_stream_reqwest::Cache;
 use http_cache_stream_reqwest::storage::DefaultCacheStorage;
@@ -64,20 +66,20 @@ pub trait StorageBackend {
     /// `https` schemed URL.
     ///
     /// Otherwise, the given URL is returned as-is.
-    fn rewrite_url(&self, url: Url) -> Result<Url>;
+    fn rewrite_url<'a>(config: &Config, url: &'a Url) -> Result<Cow<'a, Url>>;
 
     /// Joins segments to a URL to form a new URL.
-    fn join_url<'a>(&self, url: Url, segments: impl Iterator<Item = &'a str>) -> Result<Url>;
+    fn join_url<'a>(&self, url: &Url, segments: impl Iterator<Item = &'a str>) -> Result<Url>;
 
     /// Sends a HEAD request for the given URL.
     ///
     /// Returns an error if the request was not successful.
-    fn head(&self, url: Url) -> impl Future<Output = Result<Response>> + Send;
+    fn head(&self, url: &Url) -> impl Future<Output = Result<Response>> + Send;
 
     /// Sends a GET request for the given URL.
     ///
     /// Returns an error if the request was not successful.
-    fn get(&self, url: Url) -> impl Future<Output = Result<Response>> + Send;
+    fn get(&self, url: &Url) -> impl Future<Output = Result<Response>> + Send;
 
     /// Sends a conditional ranged GET request for the given URL at the given
     /// start offset.
@@ -89,7 +91,7 @@ pub trait StorageBackend {
     /// not match (condition not met).
     fn get_at_offset(
         &self,
-        url: Url,
+        url: &Url,
         etag: &str,
         offset: u64,
     ) -> impl Future<Output = Result<Response>> + Send;
@@ -99,8 +101,8 @@ pub trait StorageBackend {
     /// Returns a list of relative paths from the given URL.
     ///
     /// If the given storage URL is not a directory, an empty list is returned.
-    fn walk(&self, url: Url) -> impl Future<Output = Result<Vec<String>>> + Send;
+    fn walk(&self, url: &Url) -> impl Future<Output = Result<Vec<String>>> + Send;
 
     /// Creates a new upload.
-    fn new_upload(&self, url: Url) -> impl Future<Output = Result<Self::Upload>> + Send;
+    fn new_upload(&self, url: &Url) -> impl Future<Output = Result<Self::Upload>> + Send;
 }

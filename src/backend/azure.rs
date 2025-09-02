@@ -1,5 +1,6 @@
 //! Implementation of the Azure Blob Storage backend.
 
+use std::borrow::Cow;
 use std::sync::Arc;
 
 use base64::Engine;
@@ -393,7 +394,7 @@ impl StorageBackend for AzureBlobStorageBackend {
         }
     }
 
-    fn rewrite_url(&self, url: Url) -> Result<Url> {
+    fn rewrite_url<'a>(config: &Config, url: &'a Url) -> Result<Cow<'a, Url>> {
         match url.scheme() {
             "az" => {
                 let account = url.host_str().ok_or(AzureError::InvalidScheme)?;
@@ -402,7 +403,7 @@ impl StorageBackend for AzureBlobStorageBackend {
                     return Err(AzureError::InvalidScheme.into());
                 }
 
-                let (scheme, root, port) = if self.config.azure.use_azurite {
+                let (scheme, root, port) = if config.azure.use_azurite {
                     ("http", AZURITE_ROOT_DOMAIN, ":10000")
                 } else {
                     ("https", AZURE_BLOB_STORAGE_ROOT_DOMAIN, "")
@@ -430,13 +431,15 @@ impl StorageBackend for AzureBlobStorageBackend {
                     }
                 }
                 .parse()
+                .map(Cow::Owned)
                 .map_err(|_| AzureError::InvalidScheme.into())
             }
-            _ => Ok(url),
+            _ => Ok(Cow::Borrowed(url)),
         }
     }
 
-    fn join_url<'a>(&self, mut url: Url, segments: impl Iterator<Item = &'a str>) -> Result<Url> {
+    fn join_url<'a>(&self, url: &Url, segments: impl Iterator<Item = &'a str>) -> Result<Url> {
+        let mut url = url.clone();
         let mut segments = segments.peekable();
 
         // Check to see if we're joining a path to the root container; that's not
@@ -459,9 +462,9 @@ impl StorageBackend for AzureBlobStorageBackend {
         Ok(url)
     }
 
-    async fn head(&self, url: Url) -> Result<Response> {
+    async fn head(&self, url: &Url) -> Result<Response> {
         debug_assert!(
-            Self::is_supported_url(&self.config, &url),
+            Self::is_supported_url(&self.config, url),
             "{url} is not a supported Azure URL",
             url = url.as_str()
         );
@@ -470,7 +473,7 @@ impl StorageBackend for AzureBlobStorageBackend {
 
         let response = self
             .client
-            .head(url)
+            .head(url.clone())
             .header(header::USER_AGENT, USER_AGENT)
             .header(header::DATE, Utc::now().to_rfc2822())
             .header(AZURE_VERSION_HEADER, AZURE_STORAGE_VERSION)
@@ -484,9 +487,9 @@ impl StorageBackend for AzureBlobStorageBackend {
         Ok(response)
     }
 
-    async fn get(&self, url: Url) -> Result<Response> {
+    async fn get(&self, url: &Url) -> Result<Response> {
         debug_assert!(
-            Self::is_supported_url(&self.config, &url),
+            Self::is_supported_url(&self.config, url),
             "{url} is not a supported Azure URL",
             url = url.as_str()
         );
@@ -495,7 +498,7 @@ impl StorageBackend for AzureBlobStorageBackend {
 
         let response = self
             .client
-            .get(url)
+            .get(url.clone())
             .header(header::USER_AGENT, USER_AGENT)
             .header(header::DATE, Utc::now().to_rfc2822())
             .header(AZURE_VERSION_HEADER, AZURE_STORAGE_VERSION)
@@ -509,9 +512,9 @@ impl StorageBackend for AzureBlobStorageBackend {
         Ok(response)
     }
 
-    async fn get_at_offset(&self, url: Url, etag: &str, offset: u64) -> Result<Response> {
+    async fn get_at_offset(&self, url: &Url, etag: &str, offset: u64) -> Result<Response> {
         debug_assert!(
-            Self::is_supported_url(&self.config, &url),
+            Self::is_supported_url(&self.config, url),
             "{url} is not a supported Azure URL",
             url = url.as_str()
         );
@@ -523,7 +526,7 @@ impl StorageBackend for AzureBlobStorageBackend {
 
         let response = self
             .client
-            .get(url)
+            .get(url.clone())
             .header(header::USER_AGENT, USER_AGENT)
             .header(header::DATE, Utc::now().to_rfc2822())
             .header(header::RANGE, format!("bytes={offset}-"))
@@ -547,9 +550,9 @@ impl StorageBackend for AzureBlobStorageBackend {
         Ok(response)
     }
 
-    async fn walk(&self, url: Url) -> Result<Vec<String>> {
+    async fn walk(&self, url: &Url) -> Result<Vec<String>> {
         debug_assert!(
-            Self::is_supported_url(&self.config, &url),
+            Self::is_supported_url(&self.config, url),
             "{url} is not a supported Azure URL",
             url = url.as_str()
         );
@@ -678,16 +681,16 @@ impl StorageBackend for AzureBlobStorageBackend {
         Ok(paths)
     }
 
-    async fn new_upload(&self, url: Url) -> Result<Self::Upload> {
+    async fn new_upload(&self, url: &Url) -> Result<Self::Upload> {
         debug_assert!(
-            Self::is_supported_url(&self.config, &url),
+            Self::is_supported_url(&self.config, url),
             "{url} is not a supported Azure URL",
             url = url.as_str()
         );
 
         Ok(AzureBlobUpload::new(
             self.client.clone(),
-            url,
+            url.clone(),
             Arc::new(Alphanumeric::new(16).to_string()),
             self.events.clone(),
         ))

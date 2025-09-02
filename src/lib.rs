@@ -16,6 +16,7 @@
 #![deny(rustdoc::broken_intra_doc_links)]
 #![cfg_attr(docsrs, feature(doc_cfg))]
 
+use std::borrow::Cow;
 use std::fmt;
 use std::ops::Deref;
 use std::path::Path;
@@ -98,14 +99,14 @@ pub enum Location<'a> {
     /// The location is a local path.
     Path(&'a Path),
     /// The location is a URL.
-    Url(Url),
+    Url(Cow<'a, Url>),
 }
 
 impl<'a> Location<'a> {
     /// Constructs a new location from a string.
     pub fn new(s: &'a str) -> Self {
         match s.parse::<Url>() {
-            Ok(url) => Self::Url(url),
+            Ok(url) => Self::Url(Cow::Owned(url)),
             Err(_) => Self::Path(Path::new(s)),
         }
     }
@@ -144,9 +145,15 @@ impl<'a> From<&'a PathBuf> for Location<'a> {
     }
 }
 
+impl<'a> From<&'a Url> for Location<'a> {
+    fn from(value: &'a Url) -> Self {
+        Self::Url(Cow::Borrowed(value))
+    }
+}
+
 impl From<Url> for Location<'_> {
     fn from(value: Url) -> Self {
-        Self::Url(value)
+        Self::Url(Cow::Owned(value))
     }
 }
 
@@ -637,19 +644,22 @@ pub async fn copy(
             }
 
             if AzureBlobStorageBackend::is_supported_url(&config, &destination) {
+                let destination = AzureBlobStorageBackend::rewrite_url(&config, &destination)?;
                 let transfer =
                     FileTransfer::new(AzureBlobStorageBackend::new(config, client, events), cancel);
-                transfer.upload(source, destination).await
+                transfer.upload(source, &destination).await
             } else if S3StorageBackend::is_supported_url(&config, &destination) {
+                let destination = S3StorageBackend::rewrite_url(&config, &destination)?;
                 let transfer =
                     FileTransfer::new(S3StorageBackend::new(config, client, events), cancel);
-                transfer.upload(source, destination).await
+                transfer.upload(source, &destination).await
             } else if GoogleStorageBackend::is_supported_url(&config, &destination) {
+                let destination = GoogleStorageBackend::rewrite_url(&config, &destination)?;
                 let transfer =
                     FileTransfer::new(GoogleStorageBackend::new(config, client, events), cancel);
-                transfer.upload(source, destination).await
+                transfer.upload(source, &destination).await
             } else {
-                Err(Error::UnsupportedUrl(destination))
+                Err(Error::UnsupportedUrl(destination.into_owned()))
             }
         }
         (Location::Url(source), Location::Path(destination)) => {
@@ -663,21 +673,24 @@ pub async fn copy(
             }
 
             if AzureBlobStorageBackend::is_supported_url(&config, &source) {
+                let source = AzureBlobStorageBackend::rewrite_url(&config, &source)?;
                 let transfer =
                     FileTransfer::new(AzureBlobStorageBackend::new(config, client, events), cancel);
-                transfer.download(source, destination).await
+                transfer.download(&source, destination).await
             } else if S3StorageBackend::is_supported_url(&config, &source) {
+                let source = S3StorageBackend::rewrite_url(&config, &source)?;
                 let transfer =
                     FileTransfer::new(S3StorageBackend::new(config, client, events), cancel);
-                transfer.download(source, destination).await
+                transfer.download(&source, destination).await
             } else if GoogleStorageBackend::is_supported_url(&config, &source) {
+                let source = GoogleStorageBackend::rewrite_url(&config, &source)?;
                 let transfer =
                     FileTransfer::new(GoogleStorageBackend::new(config, client, events), cancel);
-                transfer.download(source, destination).await
+                transfer.download(&source, destination).await
             } else {
                 let transfer =
                     FileTransfer::new(GenericStorageBackend::new(config, client, events), cancel);
-                transfer.download(source, destination).await
+                transfer.download(&source, destination).await
             }
         }
         (Location::Url(source), Location::Url(destination)) => {
@@ -690,5 +703,98 @@ pub async fn copy(
 
             Err(Error::RemoteCopyNotSupported)
         }
+    }
+}
+
+/// Re-writes a cloud storage schemed URL (e.g. `az://`, `s3://`, `gs://`) to a corresponding `https://` URL.
+///
+/// If the URL is not a cloud storage schemed URL, the given URL is returned.
+///
+/// Returns an error if the given URL is not a valid cloud storage URL.
+pub fn rewrite_url<'a>(config: &Config, url: &'a Url) -> Result<Cow<'a, Url>> {
+    if AzureBlobStorageBackend::is_supported_url(config, url) {
+        AzureBlobStorageBackend::rewrite_url(config, url)
+    } else if S3StorageBackend::is_supported_url(config, url) {
+        S3StorageBackend::rewrite_url(config, url)
+    } else if GoogleStorageBackend::is_supported_url(config, url) {
+        GoogleStorageBackend::rewrite_url(config, url)
+    } else {
+        Ok(Cow::Borrowed(url))
+    }
+}
+
+#[cfg(test)]
+mod test {
+    use super::*;
+
+    #[test]
+    fn rewrite_urls() {
+        let config = Config::default();
+
+        assert_eq!(
+            rewrite_url(&config, &"http://example.com".parse().unwrap())
+                .unwrap()
+                .as_str(),
+            "http://example.com/"
+        );
+
+        assert_eq!(
+            rewrite_url(&config, &"az://foo/bar/baz".parse().unwrap())
+                .unwrap()
+                .as_str(),
+            "https://foo.blob.core.windows.net/bar/baz"
+        );
+
+        assert_eq!(
+            rewrite_url(&config, &"s3://foo/bar/baz".parse().unwrap())
+                .unwrap()
+                .as_str(),
+            "https://foo.s3.us-east-1.amazonaws.com/bar/baz"
+        );
+
+        assert_eq!(
+            rewrite_url(&config, &"gs://foo/bar/baz".parse().unwrap())
+                .unwrap()
+                .as_str(),
+            "https://foo.storage.googleapis.com/bar/baz"
+        );
+
+        let config = Config {
+            s3: S3Config {
+                region: Some("my-region".into()),
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+
+        assert_eq!(
+            rewrite_url(&config, &"s3://foo/bar/baz".parse().unwrap())
+                .unwrap()
+                .as_str(),
+            "https://foo.s3.my-region.amazonaws.com/bar/baz"
+        );
+
+        let config = Config {
+            azure: AzureConfig { use_azurite: true },
+            s3: S3Config {
+                use_localstack: true,
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+
+        assert_eq!(
+            rewrite_url(&config, &"az://foo/bar/baz".parse().unwrap())
+                .unwrap()
+                .as_str(),
+            "http://foo.blob.core.windows.net.localhost:10000/bar/baz"
+        );
+
+        assert_eq!(
+            rewrite_url(&config, &"s3://foo/bar/baz".parse().unwrap())
+                .unwrap()
+                .as_str(),
+            "http://foo.s3.us-east-1.localhost.localstack.cloud:4566/bar/baz"
+        );
     }
 }

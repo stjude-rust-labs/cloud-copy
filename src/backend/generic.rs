@@ -2,6 +2,8 @@
 //!
 //! The generic storage backend can only be used for downloading files.
 
+use std::borrow::Cow;
+
 use bytes::Bytes;
 use chrono::Utc;
 use http_cache_stream_reqwest::Cache;
@@ -119,12 +121,13 @@ impl StorageBackend for GenericStorageBackend {
         true
     }
 
-    fn rewrite_url(&self, url: Url) -> Result<Url> {
-        Ok(url)
+    fn rewrite_url<'a>(_: &Config, url: &'a Url) -> Result<Cow<'a, Url>> {
+        Ok(Cow::Borrowed(url))
     }
 
-    fn join_url<'a>(&self, mut url: Url, segments: impl Iterator<Item = &'a str>) -> Result<Url> {
+    fn join_url<'a>(&self, url: &Url, segments: impl Iterator<Item = &'a str>) -> Result<Url> {
         // Append on the segments
+        let mut url = url.clone();
         {
             let mut existing = url.path_segments_mut().expect("url should have path");
             existing.pop_if_empty();
@@ -134,12 +137,12 @@ impl StorageBackend for GenericStorageBackend {
         Ok(url)
     }
 
-    async fn head(&self, url: Url) -> Result<Response> {
+    async fn head(&self, url: &Url) -> Result<Response> {
         debug!("sending HEAD request for `{url}`", url = url.display());
 
         let response = self
             .client
-            .head(url)
+            .head(url.clone())
             .header(header::USER_AGENT, USER_AGENT)
             .header(header::DATE, Utc::now().to_rfc2822())
             .send()
@@ -152,12 +155,12 @@ impl StorageBackend for GenericStorageBackend {
         Ok(response)
     }
 
-    async fn get(&self, url: Url) -> Result<Response> {
+    async fn get(&self, url: &Url) -> Result<Response> {
         debug!("sending GET request for `{url}`", url = url.display());
 
         let response = self
             .client
-            .get(url)
+            .get(url.clone())
             .header(header::USER_AGENT, USER_AGENT)
             .header(header::DATE, Utc::now().to_rfc2822())
             .send()
@@ -170,7 +173,7 @@ impl StorageBackend for GenericStorageBackend {
         Ok(response)
     }
 
-    async fn get_at_offset(&self, url: Url, etag: &str, offset: u64) -> Result<Response> {
+    async fn get_at_offset(&self, url: &Url, etag: &str, offset: u64) -> Result<Response> {
         debug!(
             "sending GET request at offset {offset} for `{url}`",
             url = url.display(),
@@ -178,7 +181,7 @@ impl StorageBackend for GenericStorageBackend {
 
         let response = self
             .client
-            .get(url)
+            .get(url.clone())
             .header(header::USER_AGENT, USER_AGENT)
             .header(header::DATE, Utc::now().to_rfc2822())
             .header(header::RANGE, format!("bytes={offset}-"))
@@ -201,12 +204,12 @@ impl StorageBackend for GenericStorageBackend {
         Ok(response)
     }
 
-    async fn walk(&self, _: Url) -> Result<Vec<String>> {
+    async fn walk(&self, _: &Url) -> Result<Vec<String>> {
         // The generic backend treats all URLs as files.
         Ok(Vec::default())
     }
 
-    async fn new_upload(&self, _: Url) -> Result<Self::Upload> {
+    async fn new_upload(&self, _: &Url) -> Result<Self::Upload> {
         panic!("generic storage backend cannot be used for uploading");
     }
 }

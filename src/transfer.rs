@@ -79,7 +79,7 @@ where
     /// Downloads a file to the given destination path.
     async fn download(
         &self,
-        source: Url,
+        source: &Url,
         destination: &Path,
         cancel: CancellationToken,
     ) -> Result<()> {
@@ -96,7 +96,7 @@ where
                 select! {
                     biased;
                     _ = cancel.cancelled() => Err(Error::Canceled),
-                    r = self.backend.head(source.clone()) => r
+                    r = self.backend.head(source) => r
                 }
                 .map_err(Error::into_retry_error)
             },
@@ -141,7 +141,7 @@ where
                 .into_temp_path();
 
             // Download the file with resumable retries
-            self.download_with_resume(id, &source, &temp, content_length, etag, cancel.clone())
+            self.download_with_resume(id, source, &temp, content_length, etag, cancel.clone())
                 .await?;
 
             // Persist the temp file to the destination
@@ -204,11 +204,9 @@ where
                     let response = if current > 0
                         && let Some(etag) = etag
                     {
-                        self.backend
-                            .get_at_offset(source.clone(), etag, current)
-                            .await?
+                        self.backend.get_at_offset(source, etag, current).await?
                     } else {
-                        let response = self.backend.get(source.clone()).await?;
+                        let response = self.backend.get(source).await?;
 
                         // Check to see if we should link to the cache location
                         if self.backend.config().link_to_cache
@@ -352,7 +350,7 @@ where
     async fn upload(
         self: Arc<Self>,
         source: &Path,
-        destination: Url,
+        destination: &Url,
         info: UploadInfo,
         cancel: CancellationToken,
     ) -> Result<()> {
@@ -364,7 +362,7 @@ where
                     select! {
                         biased;
                         _ = cancel.cancelled() => Err(Error::Canceled),
-                        r =  self.backend.new_upload(destination.clone()) => r,
+                        r =  self.backend.new_upload(destination) => r,
                     }
                     .map_err(Error::into_retry_error)
                 },
@@ -526,8 +524,7 @@ where
     ///
     /// If the source URL is a "directory", the files in the directory will be
     /// downloaded relative to the destination path.
-    pub async fn download(&self, source: Url, destination: impl AsRef<Path>) -> Result<()> {
-        let source: Url = self.inner.backend.rewrite_url(source)?;
+    pub async fn download(&self, source: &Url, destination: impl AsRef<Path>) -> Result<()> {
         let destination = destination.as_ref();
 
         // Start by walking the given URL for files to download
@@ -537,7 +534,7 @@ where
                 select! {
                     biased;
                     _ = self.cancel.cancelled() => Err(Error::Canceled),
-                    r = self.inner.backend.walk(source.clone()) => r
+                    r = self.inner.backend.walk(source) => r
                 }
                 .map_err(Error::into_retry_error)
             },
@@ -571,7 +568,7 @@ where
 
                 let inner = self.inner.clone();
                 let cancel = self.cancel.clone();
-                tokio::spawn(async move { inner.download(source, &destination, cancel).await })
+                tokio::spawn(async move { inner.download(&source, &destination, cancel).await })
                     .map(|r| r.expect("task panicked"))
             })
             .buffer_unordered(self.inner.backend.config().parallelism());
@@ -591,10 +588,8 @@ where
     ///
     /// If the path is a directory, each file the directory recursively contains
     /// will be uploaded.
-    pub async fn upload(&self, source: impl AsRef<Path>, destination: Url) -> Result<()> {
+    pub async fn upload(&self, source: impl AsRef<Path>, destination: &Url) -> Result<()> {
         let source = source.as_ref();
-
-        let destination = self.inner.backend.rewrite_url(destination)?;
 
         // Recursively walk the path looking for files to upload
         for entry in WalkDir::new(source) {
@@ -613,7 +608,7 @@ where
                 .expect("failed to strip path prefix");
 
             let destination = self.inner.backend.join_url(
-                destination.clone(),
+                destination,
                 relative_path
                     .components()
                     .map(|c| c.as_os_str().to_str().expect("path not UTF-8")),
@@ -676,7 +671,7 @@ where
         let result = self
             .inner
             .clone()
-            .upload(source, destination, info, self.cancel.clone())
+            .upload(source, &destination, info, self.cancel.clone())
             .await;
 
         if let Some(events) = self.inner.backend.events() {
