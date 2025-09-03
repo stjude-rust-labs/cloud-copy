@@ -50,6 +50,10 @@ struct Args {
     #[clap(long)]
     link_to_cache: bool,
 
+    /// Whether or not to overwrite the destination for downloads.
+    #[clap(long)]
+    overwrite: bool,
+
     /// The block size to use for file transfers; the default block size depends
     /// on the cloud service.
     #[clap(long, value_name = "SIZE")]
@@ -125,6 +129,7 @@ impl Args {
 
         let config = Config {
             link_to_cache: self.link_to_cache,
+            overwrite: self.overwrite,
             block_size: self.block_size,
             parallelism: self.parallelism,
             retries: self.retries,

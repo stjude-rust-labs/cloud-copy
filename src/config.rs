@@ -98,6 +98,11 @@ pub struct Config {
     /// When `false`, a copy to the destination is always performed.
     #[serde(default)]
     pub link_to_cache: bool,
+    /// Whether or not the destination should be overwritten for downloads.
+    ///
+    /// If `false` and the destination exists, an error is returned.
+    #[serde(default)]
+    pub overwrite: bool,
     /// The block size to use for file transfers.
     ///
     /// The default block size depends on the cloud storage service.

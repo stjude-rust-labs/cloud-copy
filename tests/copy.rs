@@ -168,6 +168,7 @@ fn urls(test: &str) -> Vec<Url> {
 
 fn config() -> Config {
     Config {
+        overwrite: true,
         azure: AzureConfig { use_azurite: true },
         s3: S3Config {
             use_localstack: true,
@@ -214,9 +215,7 @@ async fn roundtrip_file(test: &str, size: usize) -> Result<()> {
         .await
         .context("failed to upload file")?;
 
-        // Copy the file from the cloud to a local file (delete it first in case it
-        // exists)
-        fs::remove_file(&destination).context("failed to delete destination file")?;
+        // Copy the file from the cloud to a local file
         cloud_copy::copy(
             config.clone(),
             client.clone(),
@@ -452,11 +451,10 @@ async fn link_to_cache() -> Result<()> {
         "expected only a single link to the file"
     );
 
-    fs::remove_file(&destination).context("failed to delete destination file")?;
-
     // Download the file again (it'll link from the cache)
     cloud_copy::copy(
         Config {
+            overwrite: true,
             link_to_cache: true,
             ..Default::default()
         },
