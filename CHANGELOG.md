@@ -9,6 +9,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 #### Added
 
+* Added a `rewrite_url` for changing cloud storage schemed URLs into HTTP URLs ([#9](https://github.com/stjude-rust-labs/cloud-copy/pull/9)).
+
+## 0.1.0 - 08-19-2025
+
+#### Added
+
 * Added `HttpClient` for allowing reuse of an HTTP client between copy
   operations ([#7](https://github.com/stjude-rust-labs/cloud-copy/pull/7)).
 * Added support for linking files to the cache ([#6](https://github.com/stjude-rust-labs/cloud-copy/pull/6)).
