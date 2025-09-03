@@ -621,9 +621,8 @@ impl StorageBackend for S3StorageBackend {
         }
     }
 
-    fn join_url<'a>(&self, url: &Url, segments: impl Iterator<Item = &'a str>) -> Result<Url> {
+    fn join_url<'a>(&self, mut url: Url, segments: impl Iterator<Item = &'a str>) -> Result<Url> {
         // Append on the segments
-        let mut url = url.clone();
         {
             let mut existing = url.path_segments_mut().expect("url should have path");
             existing.pop_if_empty();
@@ -633,9 +632,9 @@ impl StorageBackend for S3StorageBackend {
         Ok(url)
     }
 
-    async fn head(&self, url: &Url) -> Result<Response> {
+    async fn head(&self, url: Url) -> Result<Response> {
         debug_assert!(
-            Self::is_supported_url(&self.config, url),
+            Self::is_supported_url(&self.config, &url),
             "{url} is not a supported S3 URL",
             url = url.as_str()
         );
@@ -645,7 +644,7 @@ impl StorageBackend for S3StorageBackend {
         let date = Utc::now();
         let mut request = self
             .client
-            .head(url.clone())
+            .head(url)
             .header(header::USER_AGENT, USER_AGENT)
             .header(AWS_DATE_HEADER, date.format("%Y%m%dT%H%M%SZ").to_string())
             .header(AWS_CONTENT_SHA256_HEADER, sha256_hex_string([]))
@@ -663,9 +662,9 @@ impl StorageBackend for S3StorageBackend {
         Ok(response)
     }
 
-    async fn get(&self, url: &Url) -> Result<Response> {
+    async fn get(&self, url: Url) -> Result<Response> {
         debug_assert!(
-            Self::is_supported_url(&self.config, url),
+            Self::is_supported_url(&self.config, &url),
             "{url} is not a supported S3 URL",
             url = url.as_str()
         );
@@ -675,7 +674,7 @@ impl StorageBackend for S3StorageBackend {
         let date = Utc::now();
         let mut request = self
             .client
-            .get(url.clone())
+            .get(url)
             .header(header::USER_AGENT, USER_AGENT)
             .header(AWS_DATE_HEADER, date.format("%Y%m%dT%H%M%SZ").to_string())
             .header(AWS_CONTENT_SHA256_HEADER, sha256_hex_string([]))
@@ -693,9 +692,9 @@ impl StorageBackend for S3StorageBackend {
         Ok(response)
     }
 
-    async fn get_at_offset(&self, url: &Url, etag: &str, offset: u64) -> Result<Response> {
+    async fn get_at_offset(&self, url: Url, etag: &str, offset: u64) -> Result<Response> {
         debug_assert!(
-            Self::is_supported_url(&self.config, url),
+            Self::is_supported_url(&self.config, &url),
             "{url} is not a supported S3 URL",
             url = url.as_str()
         );
@@ -709,7 +708,7 @@ impl StorageBackend for S3StorageBackend {
 
         let mut request = self
             .client
-            .get(url.clone())
+            .get(url)
             .header(header::USER_AGENT, USER_AGENT)
             .header(AWS_DATE_HEADER, date.format("%Y%m%dT%H%M%SZ").to_string())
             .header(AWS_CONTENT_SHA256_HEADER, sha256_hex_string([]))
@@ -742,11 +741,11 @@ impl StorageBackend for S3StorageBackend {
         Ok(response)
     }
 
-    async fn walk(&self, url: &Url) -> Result<Vec<String>> {
+    async fn walk(&self, mut url: Url) -> Result<Vec<String>> {
         // See: https://docs.aws.amazon.com/AmazonS3/latest/API/API_ListObjectsV2.html
 
         debug_assert!(
-            Self::is_supported_url(&self.config, url),
+            Self::is_supported_url(&self.config, &url),
             "{url} is not a supported S3 URL",
             url = url.as_str()
         );
@@ -760,7 +759,6 @@ impl StorageBackend for S3StorageBackend {
         prefix.push('/');
 
         // Format the request to always use the virtual-host style URL
-        let mut url = url.clone();
         let domain = url.domain().expect("URL should have domain");
         if domain.starts_with("s3") || domain.starts_with("S3") {
             // Set the host to a virtual host
@@ -842,11 +840,11 @@ impl StorageBackend for S3StorageBackend {
         Ok(paths)
     }
 
-    async fn new_upload(&self, url: &Url) -> Result<Self::Upload> {
+    async fn new_upload(&self, url: Url) -> Result<Self::Upload> {
         // See: https://docs.aws.amazon.com/AmazonS3/latest/API/API_CreateMultipartUpload.html
 
         debug_assert!(
-            Self::is_supported_url(&self.config, url),
+            Self::is_supported_url(&self.config, &url),
             "{url} is not a supported S3 URL",
             url = url.as_str()
         );
@@ -891,7 +889,7 @@ impl StorageBackend for S3StorageBackend {
         Ok(S3Upload {
             config: self.config.clone(),
             client: self.client.clone(),
-            url: url.clone(),
+            url,
             id,
             events: self.events.clone(),
         })

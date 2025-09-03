@@ -647,17 +647,17 @@ pub async fn copy(
                 let destination = AzureBlobStorageBackend::rewrite_url(&config, &destination)?;
                 let transfer =
                     FileTransfer::new(AzureBlobStorageBackend::new(config, client, events), cancel);
-                transfer.upload(source, &destination).await
+                transfer.upload(source, destination.into_owned()).await
             } else if S3StorageBackend::is_supported_url(&config, &destination) {
                 let destination = S3StorageBackend::rewrite_url(&config, &destination)?;
                 let transfer =
                     FileTransfer::new(S3StorageBackend::new(config, client, events), cancel);
-                transfer.upload(source, &destination).await
+                transfer.upload(source, destination.into_owned()).await
             } else if GoogleStorageBackend::is_supported_url(&config, &destination) {
                 let destination = GoogleStorageBackend::rewrite_url(&config, &destination)?;
                 let transfer =
                     FileTransfer::new(GoogleStorageBackend::new(config, client, events), cancel);
-                transfer.upload(source, &destination).await
+                transfer.upload(source, destination.into_owned()).await
             } else {
                 Err(Error::UnsupportedUrl(destination.into_owned()))
             }
@@ -676,21 +676,21 @@ pub async fn copy(
                 let source = AzureBlobStorageBackend::rewrite_url(&config, &source)?;
                 let transfer =
                     FileTransfer::new(AzureBlobStorageBackend::new(config, client, events), cancel);
-                transfer.download(&source, destination).await
+                transfer.download(source.into_owned(), destination).await
             } else if S3StorageBackend::is_supported_url(&config, &source) {
                 let source = S3StorageBackend::rewrite_url(&config, &source)?;
                 let transfer =
                     FileTransfer::new(S3StorageBackend::new(config, client, events), cancel);
-                transfer.download(&source, destination).await
+                transfer.download(source.into_owned(), destination).await
             } else if GoogleStorageBackend::is_supported_url(&config, &source) {
                 let source = GoogleStorageBackend::rewrite_url(&config, &source)?;
                 let transfer =
                     FileTransfer::new(GoogleStorageBackend::new(config, client, events), cancel);
-                transfer.download(&source, destination).await
+                transfer.download(source.into_owned(), destination).await
             } else {
                 let transfer =
                     FileTransfer::new(GenericStorageBackend::new(config, client, events), cancel);
-                transfer.download(&source, destination).await
+                transfer.download(source.into_owned(), destination).await
             }
         }
         (Location::Url(source), Location::Url(destination)) => {
