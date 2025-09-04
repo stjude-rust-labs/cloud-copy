@@ -2,6 +2,8 @@
 //!
 //! The generic storage backend can only be used for downloading files.
 
+use std::borrow::Cow;
+
 use bytes::Bytes;
 use chrono::Utc;
 use http_cache_stream_reqwest::Cache;
@@ -119,8 +121,8 @@ impl StorageBackend for GenericStorageBackend {
         true
     }
 
-    fn rewrite_url(&self, url: Url) -> Result<Url> {
-        Ok(url)
+    fn rewrite_url<'a>(_: &Config, url: &'a Url) -> Result<Cow<'a, Url>> {
+        Ok(Cow::Borrowed(url))
     }
 
     fn join_url<'a>(&self, mut url: Url, segments: impl Iterator<Item = &'a str>) -> Result<Url> {

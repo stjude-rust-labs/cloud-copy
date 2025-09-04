@@ -1,5 +1,6 @@
 //! Implementation of the Azure Blob Storage backend.
 
+use std::borrow::Cow;
 use std::sync::Arc;
 
 use base64::Engine;
@@ -393,7 +394,7 @@ impl StorageBackend for AzureBlobStorageBackend {
         }
     }
 
-    fn rewrite_url(&self, url: Url) -> Result<Url> {
+    fn rewrite_url<'a>(config: &Config, url: &'a Url) -> Result<Cow<'a, Url>> {
         match url.scheme() {
             "az" => {
                 let account = url.host_str().ok_or(AzureError::InvalidScheme)?;
@@ -402,7 +403,7 @@ impl StorageBackend for AzureBlobStorageBackend {
                     return Err(AzureError::InvalidScheme.into());
                 }
 
-                let (scheme, root, port) = if self.config.azure.use_azurite {
+                let (scheme, root, port) = if config.azure.use_azurite {
                     ("http", AZURITE_ROOT_DOMAIN, ":10000")
                 } else {
                     ("https", AZURE_BLOB_STORAGE_ROOT_DOMAIN, "")
@@ -430,9 +431,10 @@ impl StorageBackend for AzureBlobStorageBackend {
                     }
                 }
                 .parse()
+                .map(Cow::Owned)
                 .map_err(|_| AzureError::InvalidScheme.into())
             }
-            _ => Ok(url),
+            _ => Ok(Cow::Borrowed(url)),
         }
     }
 

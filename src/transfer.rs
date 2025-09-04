@@ -141,7 +141,7 @@ where
                 .into_temp_path();
 
             // Download the file with resumable retries
-            self.download_with_resume(id, &source, &temp, content_length, etag, cancel.clone())
+            self.download_with_resume(id, source, &temp, content_length, etag, cancel.clone())
                 .await?;
 
             // Persist the temp file to the destination
@@ -186,7 +186,7 @@ where
     async fn download_with_resume(
         &self,
         id: u64,
-        source: &Url,
+        source: Url,
         destination: &Path,
         content_length: Option<u64>,
         etag: Option<&str>,
@@ -527,7 +527,6 @@ where
     /// If the source URL is a "directory", the files in the directory will be
     /// downloaded relative to the destination path.
     pub async fn download(&self, source: Url, destination: impl AsRef<Path>) -> Result<()> {
-        let source: Url = self.inner.backend.rewrite_url(source)?;
         let destination = destination.as_ref();
 
         // Start by walking the given URL for files to download
@@ -593,8 +592,6 @@ where
     /// will be uploaded.
     pub async fn upload(&self, source: impl AsRef<Path>, destination: Url) -> Result<()> {
         let source = source.as_ref();
-
-        let destination = self.inner.backend.rewrite_url(destination)?;
 
         // Recursively walk the path looking for files to upload
         for entry in WalkDir::new(source) {

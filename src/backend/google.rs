@@ -1,5 +1,6 @@
 //! Implementation of the Google Cloud Storage backend.
 
+use std::borrow::Cow;
 use std::sync::Arc;
 
 use bytes::Bytes;
@@ -499,7 +500,7 @@ impl StorageBackend for GoogleStorageBackend {
         }
     }
 
-    fn rewrite_url(&self, url: Url) -> Result<Url> {
+    fn rewrite_url<'a>(_: &Config, url: &'a Url) -> Result<Cow<'a, Url>> {
         match url.scheme() {
             "gs" => {
                 let bucket = url.host_str().ok_or(GoogleError::InvalidScheme)?;
@@ -522,9 +523,10 @@ impl StorageBackend for GoogleStorageBackend {
                     }
                 }
                 .parse()
+                .map(Cow::Owned)
                 .map_err(|_| GoogleError::InvalidScheme.into())
             }
-            _ => Ok(url),
+            _ => Ok(Cow::Borrowed(url)),
         }
     }
 

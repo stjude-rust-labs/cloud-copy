@@ -1,5 +1,7 @@
 //! Implementation of storage backends.
 
+use std::borrow::Cow;
+
 use bytes::Bytes;
 use http_cache_stream_reqwest::Cache;
 use http_cache_stream_reqwest::storage::DefaultCacheStorage;
@@ -64,7 +66,7 @@ pub trait StorageBackend {
     /// `https` schemed URL.
     ///
     /// Otherwise, the given URL is returned as-is.
-    fn rewrite_url(&self, url: Url) -> Result<Url>;
+    fn rewrite_url<'a>(config: &Config, url: &'a Url) -> Result<Cow<'a, Url>>;
 
     /// Joins segments to a URL to form a new URL.
     fn join_url<'a>(&self, url: Url, segments: impl Iterator<Item = &'a str>) -> Result<Url>;

@@ -1,5 +1,6 @@
 //! Implementation of the S3 storage backend.
 
+use std::borrow::Cow;
 use std::sync::Arc;
 
 use bytes::Bytes;
@@ -581,10 +582,10 @@ impl StorageBackend for S3StorageBackend {
         }
     }
 
-    fn rewrite_url(&self, url: Url) -> Result<Url> {
+    fn rewrite_url<'a>(config: &Config, url: &'a Url) -> Result<Cow<'a, Url>> {
         match url.scheme() {
             "s3" => {
-                let region = self.config.s3.region.as_deref().unwrap_or(DEFAULT_REGION);
+                let region = config.s3.region.as_deref().unwrap_or(DEFAULT_REGION);
                 let bucket = url.host_str().ok_or(S3Error::InvalidScheme)?;
                 let path = url.path();
 
@@ -592,7 +593,7 @@ impl StorageBackend for S3StorageBackend {
                     return Err(S3Error::InvalidScheme.into());
                 }
 
-                let (scheme, root, port) = if self.config.azure.use_azurite {
+                let (scheme, root, port) = if config.s3.use_localstack {
                     ("http", LOCALSTACK_ROOT_DOMAIN, ":4566")
                 } else {
                     ("https", AWS_ROOT_DOMAIN, "")
@@ -613,9 +614,10 @@ impl StorageBackend for S3StorageBackend {
                     }
                 }
                 .parse()
+                .map(Cow::Owned)
                 .map_err(|_| S3Error::InvalidScheme.into())
             }
-            _ => Ok(url),
+            _ => Ok(Cow::Borrowed(url)),
         }
     }
 
