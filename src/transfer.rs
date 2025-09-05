@@ -544,6 +544,15 @@ where
         )
         .await?;
 
+        // Delete the destination if it exists
+        if let Ok(metadata) = destination.metadata() {
+            if metadata.is_file() {
+                fs::remove_file(destination).await?;
+            } else if metadata.is_dir() {
+                fs::remove_dir_all(destination).await?;
+            }
+        }
+
         // If there are no files relative to the given URL, download the URL a single
         // file
         if paths.is_empty() {

@@ -630,7 +630,7 @@ pub async fn copy(
 
     match (source, destination) {
         (Location::Path(source), Location::Path(destination)) => {
-            if destination.exists() {
+            if !config.overwrite && destination.exists() {
                 return Err(Error::DestinationExists(destination.to_path_buf()));
             }
 
@@ -663,7 +663,7 @@ pub async fn copy(
             }
         }
         (Location::Url(source), Location::Path(destination)) => {
-            if destination.exists() {
+            if !config.overwrite && destination.exists() {
                 return Err(Error::DestinationExists(destination.to_path_buf()));
             }
 
