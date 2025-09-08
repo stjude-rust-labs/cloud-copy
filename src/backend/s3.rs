@@ -840,6 +840,73 @@ impl StorageBackend for S3StorageBackend {
         Ok(paths)
     }
 
+    async fn exists(&self, mut url: Url) -> Result<bool> {
+        // See: https://docs.aws.amazon.com/AmazonS3/latest/API/API_ListObjectsV2.html
+
+        debug_assert!(
+            Self::is_supported_url(&self.config, &url),
+            "{url} is not a supported S3 URL",
+            url = url.as_str()
+        );
+
+        debug!("determining if `{url}` exists", url = url.display());
+
+        let (bucket, path) = url.bucket_and_path();
+
+        // For existence check, we don't want a trailing `/`
+        let prefix = path.strip_prefix('/').unwrap_or(path).to_string();
+
+        // Format the request to always use the virtual-host style URL
+        let domain = url.domain().expect("URL should have domain");
+        if domain.starts_with("s3") || domain.starts_with("S3") {
+            // Set the host to a virtual host
+            url.set_host(Some(&format!("{bucket}.{domain}")))
+                .map_err(|_| S3Error::InvalidBucketName)?;
+        }
+
+        url.set_path("/");
+
+        {
+            let mut pairs = url.query_pairs_mut();
+            // Use version 2.0 of the API
+            pairs.append_pair("list-type", "2");
+            // Only return objects with this prefix
+            pairs.append_pair("prefix", &prefix);
+        }
+
+        let date = Utc::now();
+
+        // List the objects with the prefix
+        let mut request = self
+            .client
+            .get(url)
+            .header(header::USER_AGENT, USER_AGENT)
+            .header(AWS_DATE_HEADER, date.format("%Y%m%dT%H%M%SZ").to_string())
+            .header(AWS_CONTENT_SHA256_HEADER, sha256_hex_string([]))
+            .build()?;
+
+        if let Some(auth) = &self.config.s3.auth {
+            append_authentication_header(auth, date, &mut request)?;
+        }
+
+        let response = self.client.execute(request).await?;
+
+        let status = response.status();
+        if !status.is_success() {
+            return Err(response.into_error().await);
+        }
+
+        let text = response.text().await?;
+        let results: ListBucketResult = match serde_xml_rs::from_str(&text) {
+            Ok(response) => response,
+            Err(e) => {
+                return Err(S3Error::UnexpectedResponse { status, error: e }.into());
+            }
+        };
+
+        Ok(!results.contents.is_empty())
+    }
+
     async fn new_upload(&self, url: Url) -> Result<Self::Upload> {
         // See: https://docs.aws.amazon.com/AmazonS3/latest/API/API_CreateMultipartUpload.html
 

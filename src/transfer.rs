@@ -602,6 +602,27 @@ where
     pub async fn upload(&self, source: impl AsRef<Path>, destination: Url) -> Result<()> {
         let source = source.as_ref();
 
+        // If requested not to overwrite, check for existence
+        if !self.inner.backend.config().overwrite {
+            let exists = Retry::spawn_notify(
+                self.inner.backend.config().retry_durations(),
+                || async {
+                    select! {
+                        biased;
+                        _ = self.cancel.cancelled() => Err(Error::Canceled),
+                        r = self.inner.backend.exists(destination.clone()) => r
+                    }
+                    .map_err(Error::into_retry_error)
+                },
+                notify_retry,
+            )
+            .await?;
+
+            if exists {
+                return Err(Error::RemoteDestinationExists(destination));
+            }
+        }
+
         // Recursively walk the path looking for files to upload
         for entry in WalkDir::new(source) {
             let entry = entry?;

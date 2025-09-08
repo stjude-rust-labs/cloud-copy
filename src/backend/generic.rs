@@ -208,6 +208,28 @@ impl StorageBackend for GenericStorageBackend {
         Ok(Vec::default())
     }
 
+    async fn exists(&self, url: Url) -> Result<bool> {
+        debug!("sending HEAD request for `{url}`", url = url.display());
+
+        let response = self
+            .client
+            .head(url)
+            .header(header::USER_AGENT, USER_AGENT)
+            .header(header::DATE, Utc::now().to_rfc2822())
+            .send()
+            .await?;
+
+        if !response.status().is_success() {
+            if response.status() == StatusCode::NOT_FOUND {
+                return Ok(false);
+            }
+
+            return Err(response.into_error().await);
+        }
+
+        Ok(true)
+    }
+
     async fn new_upload(&self, _: Url) -> Result<Self::Upload> {
         panic!("generic storage backend cannot be used for uploading");
     }

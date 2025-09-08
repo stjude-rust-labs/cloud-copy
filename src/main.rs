@@ -50,7 +50,7 @@ struct Args {
     #[clap(long)]
     link_to_cache: bool,
 
-    /// Whether or not to overwrite the destination for downloads.
+    /// Whether or not to overwrite the destination.
     #[clap(long)]
     overwrite: bool,
 

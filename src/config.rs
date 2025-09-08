@@ -98,9 +98,14 @@ pub struct Config {
     /// When `false`, a copy to the destination is always performed.
     #[serde(default)]
     pub link_to_cache: bool,
-    /// Whether or not the destination should be overwritten for downloads.
+    /// Whether or not the destination should be overwritten.
     ///
-    /// If `false` and the destination exists, an error is returned.
+    /// If `false` and the destination is a local file that already exists, the
+    /// copy operation will fail.
+    ///
+    /// If `false` and the destination is a remote file, a network request will
+    /// be made for the URL; if the request succeeds, the copy operation will
+    /// fail.
     #[serde(default)]
     pub overwrite: bool,
     /// The block size to use for file transfers.

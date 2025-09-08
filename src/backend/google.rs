@@ -756,6 +756,72 @@ impl StorageBackend for GoogleStorageBackend {
         Ok(paths)
     }
 
+    async fn exists(&self, mut url: Url) -> Result<bool> {
+        // See: https://cloud.google.com/storage/docs/xml-api/get-bucket-list
+
+        debug_assert!(
+            Self::is_supported_url(&self.config, &url),
+            "{url} is not a supported GCS URL",
+            url = url.as_str()
+        );
+
+        debug!("determining if `{url}` exists", url = url.display());
+
+        let (bucket, path) = url.bucket_and_path();
+
+        // The prefix should end with `/` to signify a directory.
+        let mut prefix = path.strip_prefix('/').unwrap_or(path).to_string();
+        prefix.push('/');
+
+        // Format the request to always use the virtual-host style URL
+        url.set_host(Some(&format!("{bucket}.{GOOGLE_ROOT_DOMAIN}")))
+            .map_err(|_| GoogleError::InvalidBucketName)?;
+        url.set_path("/");
+
+        {
+            let mut pairs = url.query_pairs_mut();
+            // Use version 2.0 of the API
+            pairs.append_pair("list-type", "2");
+            // Only return objects with this prefix
+            pairs.append_pair("prefix", &prefix);
+        }
+
+        let date = Utc::now();
+
+        // List the objects with the prefix
+        let mut request = self
+            .client
+            .get(url)
+            .header(header::USER_AGENT, USER_AGENT)
+            .header(
+                GOOGLE_DATE_HEADER,
+                date.format("%Y%m%dT%H%M%SZ").to_string(),
+            )
+            .header(GOOGLE_CONTENT_SHA256_HEADER, sha256_hex_string([]))
+            .build()?;
+
+        if let Some(auth) = &self.config.google.auth {
+            append_authentication_header(auth, date, &mut request)?;
+        }
+
+        let response = self.client.execute(request).await?;
+
+        let status = response.status();
+        if !status.is_success() {
+            return Err(response.into_error().await);
+        }
+
+        let text = response.text().await?;
+        let results: ListBucketResult = match serde_xml_rs::from_str(&text) {
+            Ok(response) => response,
+            Err(e) => {
+                return Err(GoogleError::UnexpectedResponse { status, error: e }.into());
+            }
+        };
+
+        Ok(!results.contents.is_empty())
+    }
+
     async fn new_upload(&self, url: Url) -> Result<Self::Upload> {
         // See: https://cloud.google.com/storage/docs/xml-api/post-object-multipart
 

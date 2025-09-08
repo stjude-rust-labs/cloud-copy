@@ -361,9 +361,12 @@ pub enum Error {
         /// The error that occurred creating the temporary file.
         error: std::io::Error,
     },
-    /// The destination path already exists.
+    /// The local destination path already exists.
     #[error("the destination path `{path}` already exists", path = .0.display())]
-    DestinationExists(PathBuf),
+    LocalDestinationExists(PathBuf),
+    /// The remote destination URL already exists.
+    #[error("the destination URL `{url}` already exists", url = .0.display())]
+    RemoteDestinationExists(Url),
     /// The server returned an error.
     #[error(
         "server returned status {status}{message}",
@@ -631,7 +634,7 @@ pub async fn copy(
     match (source, destination) {
         (Location::Path(source), Location::Path(destination)) => {
             if !config.overwrite && destination.exists() {
-                return Err(Error::DestinationExists(destination.to_path_buf()));
+                return Err(Error::LocalDestinationExists(destination.to_path_buf()));
             }
 
             // Two local locations, just perform a copy
@@ -664,7 +667,7 @@ pub async fn copy(
         }
         (Location::Url(source), Location::Path(destination)) => {
             if !config.overwrite && destination.exists() {
-                return Err(Error::DestinationExists(destination.to_path_buf()));
+                return Err(Error::LocalDestinationExists(destination.to_path_buf()));
             }
 
             // Perform a copy if the the source is a local path

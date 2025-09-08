@@ -10,6 +10,7 @@ use anyhow::bail;
 use cloud_copy::Alphanumeric;
 use cloud_copy::AzureConfig;
 use cloud_copy::Config;
+use cloud_copy::Error;
 use cloud_copy::HttpClient;
 use cloud_copy::S3AuthConfig;
 use cloud_copy::S3Config;
@@ -208,7 +209,7 @@ async fn roundtrip_file(test: &str, size: usize) -> Result<()> {
             config.clone(),
             client.clone(),
             &*source,
-            url.clone(),
+            &url,
             cancel.clone(),
             None,
         )
@@ -219,7 +220,7 @@ async fn roundtrip_file(test: &str, size: usize) -> Result<()> {
         cloud_copy::copy(
             config.clone(),
             client.clone(),
-            url.clone(),
+            &url,
             &*destination,
             cancel.clone(),
             None,
@@ -261,6 +262,104 @@ async fn copy_generic_url() -> Result<()> {
     )
     .await
     .context("failed to download file")?;
+
+    Ok(())
+}
+
+// A test to ensure existing destinations aren't overwritten.
+#[tokio::test]
+async fn no_overwrite() -> Result<()> {
+    let test = format!("{random}", random = Alphanumeric::new(10));
+    let mut config = config();
+    let client = HttpClient::default();
+    let cancel = CancellationToken::new();
+
+    // Create an empty temp file
+    let source = NamedTempFile::new()
+        .context("failed to create temp file")?
+        .into_temp_path();
+
+    // Copy the local file to the cloud
+    for url in urls(&test) {
+        cloud_copy::copy(
+            config.clone(),
+            client.clone(),
+            &*source,
+            &url,
+            cancel.clone(),
+            None,
+        )
+        .await
+        .context("failed to upload file")?;
+    }
+
+    config.overwrite = false;
+
+    // Attempt to overwrite the destination URLs
+    for url in urls(&test) {
+        match cloud_copy::copy(
+            config.clone(),
+            client.clone(),
+            &*source,
+            &url,
+            cancel.clone(),
+            None,
+        )
+        .await
+        .expect_err("copy operation should fail")
+        {
+            Error::RemoteDestinationExists(_) => {}
+            e => panic!("unexpected error `{e}`"),
+        }
+    }
+
+    // Attempt to overwrite the source
+    for url in urls(&test) {
+        match cloud_copy::copy(
+            config.clone(),
+            client.clone(),
+            &url,
+            &*source,
+            cancel.clone(),
+            None,
+        )
+        .await
+        .expect_err("copy operation should fail")
+        {
+            Error::LocalDestinationExists(_) => {}
+            e => panic!("unexpected error `{e}`"),
+        }
+    }
+
+    config.overwrite = true;
+
+    // Overwrite the destination URLs
+    for url in urls(&test) {
+        cloud_copy::copy(
+            config.clone(),
+            client.clone(),
+            &*source,
+            &url,
+            cancel.clone(),
+            None,
+        )
+        .await
+        .context("failed to upload file")?;
+    }
+
+    // Overwrite the source
+    for url in urls(&test) {
+        cloud_copy::copy(
+            config.clone(),
+            client.clone(),
+            &url,
+            &*source,
+            cancel.clone(),
+            None,
+        )
+        .await
+        .context("failed to download file")?;
+    }
 
     Ok(())
 }
@@ -322,7 +421,7 @@ async fn roundtrip_directory() -> Result<()> {
             config.clone(),
             client.clone(),
             source.path(),
-            url.clone(),
+            &url,
             cancel.clone(),
             None,
         )
@@ -335,7 +434,7 @@ async fn roundtrip_directory() -> Result<()> {
         cloud_copy::copy(
             config.clone(),
             client.clone(),
-            url.clone(),
+            &url,
             destination.path(),
             cancel.clone(),
             None,
