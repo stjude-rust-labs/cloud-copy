@@ -390,7 +390,9 @@ where
             )
             .await?;
 
-            parts.push(part);
+            if let Some(part) = part {
+                parts.push(part);
+            }
         } else {
             // Create a stream of tasks for uploading the blocks
             let file = Arc::new(File::open(source)?);
@@ -438,7 +440,9 @@ where
                 match result {
                     Some(result) => {
                         let (block, part) = result?;
-                        parts[block as usize] = part;
+                        if let Some(part) = part {
+                            parts[block as usize] = part;
+                        }
                     }
                     None => break,
                 }
@@ -469,7 +473,7 @@ where
         bytes: Bytes,
         upload: &U,
         cancel: CancellationToken,
-    ) -> Result<U::Part> {
+    ) -> Result<Option<U::Part>> {
         if let Some(events) = self.backend.events() {
             events
                 .send(TransferEvent::BlockStarted {

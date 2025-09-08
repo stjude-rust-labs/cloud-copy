@@ -274,7 +274,7 @@ pub struct GoogleUpload {
 impl Upload for GoogleUpload {
     type Part = GoogleUploadPart;
 
-    async fn put(&self, id: u64, block: u64, bytes: Bytes) -> Result<Self::Part> {
+    async fn put(&self, id: u64, block: u64, bytes: Bytes) -> Result<Option<Self::Part>> {
         // See: https://cloud.google.com/storage/docs/xml-api/put-object-multipart
 
         debug!(
@@ -330,10 +330,10 @@ impl Upload for GoogleUpload {
             .and_then(|v| v.to_str().ok())
             .ok_or(GoogleError::ResponseMissingETag)?;
 
-        Ok(GoogleUploadPart {
+        Ok(Some(GoogleUploadPart {
             number: block + 1,
             etag: etag.to_string(),
-        })
+        }))
     }
 
     async fn finalize(&self, parts: &[Self::Part]) -> Result<()> {

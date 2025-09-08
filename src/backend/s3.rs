@@ -346,7 +346,7 @@ pub struct S3Upload {
 impl Upload for S3Upload {
     type Part = S3UploadPart;
 
-    async fn put(&self, id: u64, block: u64, bytes: Bytes) -> Result<Self::Part> {
+    async fn put(&self, id: u64, block: u64, bytes: Bytes) -> Result<Option<Self::Part>> {
         // See: https://docs.aws.amazon.com/AmazonS3/latest/API/API_UploadPart.html
 
         debug!(
@@ -399,10 +399,10 @@ impl Upload for S3Upload {
             .and_then(|v| v.to_str().ok())
             .ok_or(S3Error::ResponseMissingETag)?;
 
-        Ok(S3UploadPart {
+        Ok(Some(S3UploadPart {
             number: block + 1,
             etag: etag.to_string(),
-        })
+        }))
     }
 
     async fn finalize(&self, parts: &[Self::Part]) -> Result<()> {

@@ -55,7 +55,7 @@ pub struct GenericUpload;
 impl Upload for GenericUpload {
     type Part = ();
 
-    async fn put(&self, _: u64, _: u64, _: Bytes) -> Result<Self::Part> {
+    async fn put(&self, _: u64, _: u64, _: Bytes) -> Result<Option<Self::Part>> {
         unimplemented!()
     }
 

@@ -208,7 +208,12 @@ impl AzureBlobUpload {
 impl Upload for AzureBlobUpload {
     type Part = String;
 
-    async fn put(&self, id: u64, block: u64, bytes: bytes::Bytes) -> Result<Self::Part> {
+    async fn put(&self, id: u64, block: u64, bytes: bytes::Bytes) -> Result<Option<Self::Part>> {
+        // Azure doesn't support uploading blocks of size 0
+        if bytes.is_empty() {
+            return Ok(None);
+        }
+
         let block_id =
             BASE64_STANDARD.encode(format!("{block_id}:{block:05}", block_id = self.block_id));
 
@@ -257,7 +262,7 @@ impl Upload for AzureBlobUpload {
             .await?;
 
         if response.status() == StatusCode::CREATED {
-            Ok(block_id)
+            Ok(Some(block_id))
         } else {
             Err(response.into_error().await)
         }

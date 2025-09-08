@@ -27,12 +27,15 @@ pub trait Upload: Send + Sync + 'static {
     /// Puts a block as part of the upload.
     ///
     /// Upon success, returns information about the part that was uploaded.
+    ///
+    /// Returns `Ok(None)` if the put wasn't necessary (i.e. an empty block for
+    /// some backends).
     fn put(
         &self,
         id: u64,
         block: u64,
         bytes: Bytes,
-    ) -> impl Future<Output = Result<Self::Part>> + Send;
+    ) -> impl Future<Output = Result<Option<Self::Part>>> + Send;
 
     /// Finalizes the upload given the parts that were uploaded.
     fn finalize(&self, parts: &[Self::Part]) -> impl Future<Output = Result<()>> + Send;
