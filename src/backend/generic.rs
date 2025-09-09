@@ -55,7 +55,7 @@ pub struct GenericUpload;
 impl Upload for GenericUpload {
     type Part = ();
 
-    async fn put(&self, _: u64, _: u64, _: Bytes) -> Result<Self::Part> {
+    async fn put(&self, _: u64, _: u64, _: Bytes) -> Result<Option<Self::Part>> {
         unimplemented!()
     }
 
@@ -136,7 +136,7 @@ impl StorageBackend for GenericStorageBackend {
         Ok(url)
     }
 
-    async fn head(&self, url: Url) -> Result<Response> {
+    async fn head(&self, url: Url, must_exist: bool) -> Result<Response> {
         debug!("sending HEAD request for `{url}`", url = url.display());
 
         let response = self
@@ -148,6 +148,11 @@ impl StorageBackend for GenericStorageBackend {
             .await?;
 
         if !response.status().is_success() {
+            // If the resource isn't required to exist and it's a 404, return the response.
+            if !must_exist && response.status() == StatusCode::NOT_FOUND {
+                return Ok(response);
+            }
+
             return Err(response.into_error().await);
         }
 
