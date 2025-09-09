@@ -842,14 +842,13 @@ impl StorageBackend for S3StorageBackend {
 
     async fn exists(&self, mut url: Url) -> Result<bool> {
         // See: https://docs.aws.amazon.com/AmazonS3/latest/API/API_ListObjectsV2.html
-
         debug_assert!(
             Self::is_supported_url(&self.config, &url),
             "{url} is not a supported S3 URL",
             url = url.as_str()
         );
 
-        debug!("determining if `{url}` exists", url = url.display());
+        debug!("checking existence of `{url}`", url = url.display());
 
         let (bucket, path) = url.bucket_and_path();
 

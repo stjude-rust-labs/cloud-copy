@@ -702,7 +702,7 @@ impl StorageBackend for AzureBlobStorageBackend {
             url = url.as_str()
         );
 
-        debug!("determining if `{url}` exists", url = url.display());
+        debug!("checking existence of `{url}`", url = url.display());
 
         let (mut container, prefix) = Self::calculate_container_url(&url)?;
 

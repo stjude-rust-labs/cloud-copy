@@ -209,7 +209,7 @@ impl StorageBackend for GenericStorageBackend {
     }
 
     async fn exists(&self, url: Url) -> Result<bool> {
-        debug!("sending HEAD request for `{url}`", url = url.display());
+        debug!("checking existence of `{url}`", url = url.display());
 
         let response = self
             .client

@@ -758,14 +758,13 @@ impl StorageBackend for GoogleStorageBackend {
 
     async fn exists(&self, mut url: Url) -> Result<bool> {
         // See: https://cloud.google.com/storage/docs/xml-api/get-bucket-list
-
         debug_assert!(
             Self::is_supported_url(&self.config, &url),
             "{url} is not a supported GCS URL",
             url = url.as_str()
         );
 
-        debug!("determining if `{url}` exists", url = url.display());
+        debug!("checking existence of `{url}`", url = url.display());
 
         let (bucket, path) = url.bucket_and_path();
 
