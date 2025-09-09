@@ -136,7 +136,7 @@ impl StorageBackend for GenericStorageBackend {
         Ok(url)
     }
 
-    async fn head(&self, url: Url) -> Result<Response> {
+    async fn head(&self, url: Url, must_exist: bool) -> Result<Response> {
         debug!("sending HEAD request for `{url}`", url = url.display());
 
         let response = self
@@ -148,6 +148,11 @@ impl StorageBackend for GenericStorageBackend {
             .await?;
 
         if !response.status().is_success() {
+            // If the resource isn't required to exist and it's a 404, return the response.
+            if !must_exist && response.status() == StatusCode::NOT_FOUND {
+                return Ok(response);
+            }
+
             return Err(response.into_error().await);
         }
 
@@ -206,28 +211,6 @@ impl StorageBackend for GenericStorageBackend {
     async fn walk(&self, _: Url) -> Result<Vec<String>> {
         // The generic backend treats all URLs as files.
         Ok(Vec::default())
-    }
-
-    async fn exists(&self, url: Url) -> Result<bool> {
-        debug!("checking existence of `{url}`", url = url.display());
-
-        let response = self
-            .client
-            .head(url)
-            .header(header::USER_AGENT, USER_AGENT)
-            .header(header::DATE, Utc::now().to_rfc2822())
-            .send()
-            .await?;
-
-        if !response.status().is_success() {
-            if response.status() == StatusCode::NOT_FOUND {
-                return Ok(false);
-            }
-
-            return Err(response.into_error().await);
-        }
-
-        Ok(true)
     }
 
     async fn new_upload(&self, _: Url) -> Result<Self::Upload> {

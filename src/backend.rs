@@ -76,8 +76,11 @@ pub trait StorageBackend {
 
     /// Sends a HEAD request for the given URL.
     ///
+    /// If `must_exist` is `true`, an error should be returned on a 404
+    /// response.
+    ///
     /// Returns an error if the request was not successful.
-    fn head(&self, url: Url) -> impl Future<Output = Result<Response>> + Send;
+    fn head(&self, url: Url, must_exist: bool) -> impl Future<Output = Result<Response>> + Send;
 
     /// Sends a GET request for the given URL.
     ///
@@ -105,9 +108,6 @@ pub trait StorageBackend {
     ///
     /// If the given storage URL is not a directory, an empty list is returned.
     fn walk(&self, url: Url) -> impl Future<Output = Result<Vec<String>>> + Send;
-
-    /// Determines if the given storage URL already exists.
-    fn exists(&self, url: Url) -> impl Future<Output = Result<bool>> + Send;
 
     /// Creates a new upload.
     fn new_upload(&self, url: Url) -> impl Future<Output = Result<Self::Upload>> + Send;

@@ -306,10 +306,10 @@ async fn no_overwrite() -> Result<()> {
             None,
         )
         .await
-        .expect_err("copy operation should fail")
         {
-            Error::RemoteDestinationExists(_) => {}
-            e => panic!("unexpected error `{e}`"),
+            Ok(_) => panic!("copy operation should fail for `{url}`"),
+            Err(Error::RemoteDestinationExists(_)) => {}
+            Err(e) => panic!("unexpected error `{e}` for `{url}`"),
         }
     }
 
@@ -324,10 +324,10 @@ async fn no_overwrite() -> Result<()> {
             None,
         )
         .await
-        .expect_err("copy operation should fail")
         {
-            Error::LocalDestinationExists(_) => {}
-            e => panic!("unexpected error `{e}`"),
+            Ok(_) => panic!("copy operation should fail for `{url}`"),
+            Err(Error::LocalDestinationExists(_)) => {}
+            Err(e) => panic!("unexpected error `{e}` for `{url}`"),
         }
     }
 

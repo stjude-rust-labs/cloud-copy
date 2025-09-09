@@ -328,62 +328,6 @@ impl AzureBlobStorageBackend {
             events,
         }
     }
-
-    /// Calculates the container URL from the given Azure Storage URL.
-    ///
-    /// Returns the container URL with the prefix to use for list operations.
-    fn calculate_container_url(url: &Url) -> Result<(Url, String)> {
-        let mut container: Url = url.clone();
-
-        // Clear the path segments for the list request; we only want the container name
-        let mut prefix = {
-            let mut container_segments = container
-                .path_segments_mut()
-                .expect("URL should have a path");
-            container_segments.clear();
-
-            // Start by treating the first path segment as the container to list the
-            // contents of
-            let mut source_segments = url.path_segments().expect("URL should have a path");
-            let name = source_segments.next().ok_or(AzureError::BlobNameMissing)?;
-            container_segments.push(name);
-
-            // The remainder is the prefix we're going to search for
-            source_segments.fold(String::new(), |mut p, s| {
-                if !p.is_empty() {
-                    p.push('/');
-                }
-
-                p.push_str(s);
-                p
-            })
-        };
-
-        // If there's no prefix, then we need to use the implicit root container
-        if prefix.is_empty() {
-            let mut container_segments = container
-                .path_segments_mut()
-                .expect("URL should have a path");
-            container_segments.clear();
-            container_segments.push(AZURE_ROOT_CONTAINER);
-
-            prefix = url.path_segments().expect("URL should have a path").fold(
-                String::new(),
-                |mut p, s| {
-                    if !p.is_empty() {
-                        p.push('/');
-                    }
-
-                    p.push_str(s);
-                    p
-                },
-            );
-
-            assert!(!prefix.is_empty());
-        }
-
-        Ok((container, prefix))
-    }
 }
 
 impl StorageBackend for AzureBlobStorageBackend {
@@ -522,7 +466,7 @@ impl StorageBackend for AzureBlobStorageBackend {
         Ok(url)
     }
 
-    async fn head(&self, url: Url) -> Result<Response> {
+    async fn head(&self, url: Url, must_exist: bool) -> Result<Response> {
         debug_assert!(
             Self::is_supported_url(&self.config, &url),
             "{url} is not a supported Azure URL",
@@ -541,6 +485,11 @@ impl StorageBackend for AzureBlobStorageBackend {
             .await?;
 
         if !response.status().is_success() {
+            // If the resource isn't required to exist and it's a 404, return the response.
+            if !must_exist && response.status() == StatusCode::NOT_FOUND {
+                return Ok(response);
+            }
+
             return Err(response.into_error().await);
         }
 
@@ -619,9 +568,56 @@ impl StorageBackend for AzureBlobStorageBackend {
 
         debug!("walking `{url}` as a directory", url = url.display());
 
-        let (mut container, mut prefix) = Self::calculate_container_url(&url)?;
+        let mut container = url.clone();
 
-        // For a walk, the prefix should always end with `/`
+        // Clear the path segments for the list request; we only want the container name
+        let mut prefix = {
+            let mut container_segments = container
+                .path_segments_mut()
+                .expect("URL should have a path");
+            container_segments.clear();
+
+            // Start by treating the first path segment as the container to list the
+            // contents of
+            let mut source_segments = url.path_segments().expect("URL should have a path");
+            let name = source_segments.next().ok_or(AzureError::BlobNameMissing)?;
+            container_segments.push(name);
+
+            // The remainder is the prefix we're going to search for
+            source_segments.fold(String::new(), |mut p, s| {
+                if !p.is_empty() {
+                    p.push('/');
+                }
+
+                p.push_str(s);
+                p
+            })
+        };
+
+        // If there's no prefix, then we need to use the implicit root container
+        if prefix.is_empty() {
+            let mut container_segments = container
+                .path_segments_mut()
+                .expect("URL should have a path");
+            container_segments.clear();
+            container_segments.push(AZURE_ROOT_CONTAINER);
+
+            prefix = url.path_segments().expect("URL should have a path").fold(
+                String::new(),
+                |mut p, s| {
+                    if !p.is_empty() {
+                        p.push('/');
+                    }
+
+                    p.push_str(s);
+                    p
+                },
+            );
+
+            assert!(!prefix.is_empty());
+        }
+
+        // The prefix should end with `/` to signify a directory.
         prefix.push('/');
 
         {
@@ -694,66 +690,22 @@ impl StorageBackend for AzureBlobStorageBackend {
         Ok(paths)
     }
 
-    /// Determines if the given storage URL already exists.
-    async fn exists(&self, url: Url) -> Result<bool> {
-        debug_assert!(
-            Self::is_supported_url(&self.config, &url),
-            "{url} is not a supported Azure URL",
-            url = url.as_str()
-        );
-
-        debug!("checking existence of `{url}`", url = url.display());
-
-        let (mut container, prefix) = Self::calculate_container_url(&url)?;
-
-        {
-            // Append the operation and block id to the URL
-            // These parameters are documented here: https://learn.microsoft.com/en-us/rest/api/storageservices/list-blobs
-            let mut pairs = container.query_pairs_mut();
-            // The resource operation is on the container
-            pairs.append_pair("restype", "container");
-            // The operation is a list
-            pairs.append_pair("comp", "list");
-            // The prefix to use for listing blobs in the container.
-            pairs.append_pair("prefix", &prefix);
-        }
-
-        // List the blobs with the prefix
-        let response = self
-            .client
-            .get(container)
-            .header(header::USER_AGENT, USER_AGENT)
-            .header(header::DATE, Utc::now().to_rfc2822())
-            .header(AZURE_VERSION_HEADER, AZURE_STORAGE_VERSION)
-            .send()
-            .await?;
-
-        let status = response.status();
-        if !status.is_success() {
-            if status == StatusCode::NOT_FOUND {
-                return Ok(false);
-            }
-
-            return Err(response.into_error().await);
-        }
-
-        let text = response.text().await?;
-        let results: Results = match serde_xml_rs::from_str(&text) {
-            Ok(response) => response,
-            Err(e) => {
-                return Err(AzureError::UnexpectedResponse { status, error: e }.into());
-            }
-        };
-
-        Ok(!results.blobs.items.is_empty())
-    }
-
     async fn new_upload(&self, url: Url) -> Result<Self::Upload> {
         debug_assert!(
             Self::is_supported_url(&self.config, &url),
             "{url} is not a supported Azure URL",
             url = url.as_str()
         );
+
+        // Azure doesn't support conditional requests for `Put Block`.
+        // Therefore, we must issue a HEAD request for the blob if not overwriting.
+        // See: https://learn.microsoft.com/en-us/rest/api/storageservices/specifying-conditional-headers-for-blob-service-operations
+        if !self.config.overwrite {
+            let response = self.head(url.clone(), false).await?;
+            if response.status() != StatusCode::NOT_FOUND {
+                return Err(Error::RemoteDestinationExists(url));
+            }
+        }
 
         Ok(AzureBlobUpload::new(
             self.client.clone(),
