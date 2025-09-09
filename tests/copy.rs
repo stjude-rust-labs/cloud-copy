@@ -398,7 +398,7 @@ async fn roundtrip_directory() -> Result<()> {
 /// Windows][1] is only available on nightly.
 ///
 /// [1]: https://doc.rust-lang.org/std/os/windows/fs/trait.MetadataExt.html#tymethod.number_of_links
-#[cfg_attr(windows, ignore = "test not implemented on Windows")]
+#[cfg(unix)]
 #[tokio::test]
 async fn link_to_cache() -> Result<()> {
     use std::os::unix::fs::MetadataExt;
