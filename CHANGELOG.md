@@ -9,8 +9,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 #### Added
 
+* Respect the `--overwrite` option for remote destinations ([#11](https://github.com/stjude-rust-labs/cloud-copy/pull/11)).
 * Implemented an `--overwrite` option in the CLI ([#10](https://github.com/stjude-rust-labs/cloud-copy/pull/10)).
 * Added a `rewrite_url` for changing cloud storage schemed URLs into HTTP URLs ([#9](https://github.com/stjude-rust-labs/cloud-copy/pull/9)).
+
+#### Fixed
+
+* Made upload progress of small files more consistent ([#11](https://github.com/stjude-rust-labs/cloud-copy/pull/11)).
+* Fixed empty file uploads for Azure Storage ([#11](https://github.com/stjude-rust-labs/cloud-copy/pull/11)).
 
 ## 0.1.0 - 08-19-2025
 

@@ -208,7 +208,12 @@ impl AzureBlobUpload {
 impl Upload for AzureBlobUpload {
     type Part = String;
 
-    async fn put(&self, id: u64, block: u64, bytes: bytes::Bytes) -> Result<Self::Part> {
+    async fn put(&self, id: u64, block: u64, bytes: bytes::Bytes) -> Result<Option<Self::Part>> {
+        // Azure doesn't support uploading blocks of size 0
+        if bytes.is_empty() {
+            return Ok(None);
+        }
+
         let block_id =
             BASE64_STANDARD.encode(format!("{block_id}:{block:05}", block_id = self.block_id));
 
@@ -257,7 +262,7 @@ impl Upload for AzureBlobUpload {
             .await?;
 
         if response.status() == StatusCode::CREATED {
-            Ok(block_id)
+            Ok(Some(block_id))
         } else {
             Err(response.into_error().await)
         }
@@ -461,7 +466,7 @@ impl StorageBackend for AzureBlobStorageBackend {
         Ok(url)
     }
 
-    async fn head(&self, url: Url) -> Result<Response> {
+    async fn head(&self, url: Url, must_exist: bool) -> Result<Response> {
         debug_assert!(
             Self::is_supported_url(&self.config, &url),
             "{url} is not a supported Azure URL",
@@ -480,6 +485,11 @@ impl StorageBackend for AzureBlobStorageBackend {
             .await?;
 
         if !response.status().is_success() {
+            // If the resource isn't required to exist and it's a 404, return the response.
+            if !must_exist && response.status() == StatusCode::NOT_FOUND {
+                return Ok(response);
+            }
+
             return Err(response.into_error().await);
         }
 
@@ -686,6 +696,16 @@ impl StorageBackend for AzureBlobStorageBackend {
             "{url} is not a supported Azure URL",
             url = url.as_str()
         );
+
+        // Azure doesn't support conditional requests for `Put Block`.
+        // Therefore, we must issue a HEAD request for the blob if not overwriting.
+        // See: https://learn.microsoft.com/en-us/rest/api/storageservices/specifying-conditional-headers-for-blob-service-operations
+        if !self.config.overwrite {
+            let response = self.head(url.clone(), false).await?;
+            if response.status() != StatusCode::NOT_FOUND {
+                return Err(Error::RemoteDestinationExists(url));
+            }
+        }
 
         Ok(AzureBlobUpload::new(
             self.client.clone(),

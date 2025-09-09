@@ -72,6 +72,20 @@ pin_project! {
         // Whether or not the stream is finished.
         finished: bool,
     }
+
+    impl<S> PinnedDrop for TransferStream<S> {
+        fn drop(this: Pin<&mut Self>) {
+            if let Some(events) = &this.events {
+                events
+                    .send(TransferEvent::BlockProgress {
+                        id: this.id,
+                        block: this.block,
+                        transferred: this.transferred,
+                    })
+                    .ok();
+            }
+        }
+    }
 }
 
 impl<S> TransferStream<S> {
@@ -141,34 +155,10 @@ where
             }
             Poll::Ready(Some(Err(e))) => {
                 *this.finished = true;
-
-                // Send one last progress event
-                if let Some(events) = &this.events {
-                    events
-                        .send(TransferEvent::BlockProgress {
-                            id: *this.id,
-                            block: *this.block,
-                            transferred: *this.transferred,
-                        })
-                        .ok();
-                }
-
                 Poll::Ready(Some(Err(e)))
             }
             Poll::Ready(None) => {
                 *this.finished = true;
-
-                // Send one last progress event
-                if let Some(events) = &this.events {
-                    events
-                        .send(TransferEvent::BlockProgress {
-                            id: *this.id,
-                            block: *this.block,
-                            transferred: *this.transferred,
-                        })
-                        .ok();
-                }
-
                 Poll::Ready(None)
             }
             Poll::Pending => Poll::Pending,

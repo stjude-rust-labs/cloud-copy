@@ -346,7 +346,7 @@ pub struct S3Upload {
 impl Upload for S3Upload {
     type Part = S3UploadPart;
 
-    async fn put(&self, id: u64, block: u64, bytes: Bytes) -> Result<Self::Part> {
+    async fn put(&self, id: u64, block: u64, bytes: Bytes) -> Result<Option<Self::Part>> {
         // See: https://docs.aws.amazon.com/AmazonS3/latest/API/API_UploadPart.html
 
         debug!(
@@ -399,10 +399,10 @@ impl Upload for S3Upload {
             .and_then(|v| v.to_str().ok())
             .ok_or(S3Error::ResponseMissingETag)?;
 
-        Ok(S3UploadPart {
+        Ok(Some(S3UploadPart {
             number: block + 1,
             etag: etag.to_string(),
-        })
+        }))
     }
 
     async fn finalize(&self, parts: &[Self::Part]) -> Result<()> {
@@ -632,7 +632,7 @@ impl StorageBackend for S3StorageBackend {
         Ok(url)
     }
 
-    async fn head(&self, url: Url) -> Result<Response> {
+    async fn head(&self, url: Url, must_exist: bool) -> Result<Response> {
         debug_assert!(
             Self::is_supported_url(&self.config, &url),
             "{url} is not a supported S3 URL",
@@ -656,6 +656,11 @@ impl StorageBackend for S3StorageBackend {
 
         let response = self.client.execute(request).await?;
         if !response.status().is_success() {
+            // If the resource isn't required to exist and it's a 404, return the response.
+            if !must_exist && response.status() == StatusCode::NOT_FOUND {
+                return Ok(response);
+            }
+
             return Err(response.into_error().await);
         }
 
@@ -849,6 +854,16 @@ impl StorageBackend for S3StorageBackend {
             url = url.as_str()
         );
 
+        // S3 doesn't support conditional requests for `CreateMultipartUpload`.
+        // Therefore, we must issue a HEAD request for the object if not overwriting.
+        // See: https://docs.aws.amazon.com/AmazonS3/latest/userguide/conditional-writes.html#conditional-write-key-names
+        if !self.config.overwrite {
+            let response = self.head(url.clone(), false).await?;
+            if response.status() != StatusCode::NOT_FOUND {
+                return Err(Error::RemoteDestinationExists(url));
+            }
+        }
+
         debug!("sending POST request for `{url}`", url = url.display());
 
         let mut create = url.clone();
@@ -868,7 +883,6 @@ impl StorageBackend for S3StorageBackend {
         }
 
         let response = self.client.execute(request).await?;
-
         let status = response.status();
         if !status.is_success() {
             return Err(response.into_error().await);

@@ -177,7 +177,7 @@ pub async fn handle_events(
                 Ok(TransferEvent::TransferCompleted { id, failed }) => {
                     if !failed && let Some(transfer) = transfers.remove(&id) {
                         stats.files += 1;
-                        stats.bytes +=  transfer.transferred;
+                        stats.bytes += transfer.transferred;
                     }
                 }
                 Err(RecvError::Closed) => break,
