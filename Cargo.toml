@@ -1,6 +1,6 @@
 [package]
 name = "cloud-copy"
-version = "0.1.0"
+version = "0.2.0"
 description = "A library for copying files to and from cloud storage."
 license = "MIT OR Apache-2.0"
 edition = "2024"
@@ -54,7 +54,7 @@ sha2 = "0.10.9"
 tempfile = "3.20.0"
 thiserror = "2.0.14"
 tokio = { version = "1.47.1", features = ["full"] }
-tokio-retry2 = "0.5.7"
+tokio-retry2 = "0.6.0"
 tokio-util = { version = "0.7.16", features = ["io"] }
 tracing = "0.1.41"
 tracing-indicatif = { version = "0.3.12", optional = true } 
