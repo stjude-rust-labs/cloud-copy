@@ -13,7 +13,7 @@ pub fn fill_buffer(file: &File, buffer: &mut [u8], offset: u64) -> Result<usize>
         let offset = offset + u64::try_from(read).unwrap();
         match file.seek_read(&mut buffer[read..], offset)? {
             0 => break,
-            n => read += n
+            n => read += n,
         }
     }
 
