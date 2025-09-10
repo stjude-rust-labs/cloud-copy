@@ -397,7 +397,7 @@ where
             let offset = Arc::new(AtomicU64::new(0));
             let mut stream = stream::iter(0..info.num_blocks)
                 .map(|_| {
-                    let source= source.to_path_buf();
+                    let source = source.to_path_buf();
                     let inner = self.clone();
                     let upload = upload.clone();
                     let offset = offset.clone();
