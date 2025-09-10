@@ -25,7 +25,7 @@ cli = [
     "dep:colored",
     "dep:tracing-indicatif",
     "dep:tracing-subscriber",
-    "dep:byte-unit"
+    "dep:byte-unit",
 ]
 
 [dependencies]

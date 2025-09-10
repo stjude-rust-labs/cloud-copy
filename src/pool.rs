@@ -4,8 +4,8 @@
 //! they need to be reallocated due to increasing block sizes when transferring
 //! multiple files.
 
-use std::fs::File;
 use std::ops::Deref;
+use std::path::Path;
 use std::sync::Arc;
 use std::sync::atomic::AtomicU64;
 use std::sync::atomic::Ordering;
@@ -14,7 +14,9 @@ use bytes::Bytes;
 use opool::Pool;
 use opool::PoolAllocator;
 use opool::RcGuard;
-use tokio::task::spawn_blocking;
+use tokio::fs::File;
+use tokio::io::AsyncReadExt;
+use tokio::io::AsyncSeekExt;
 
 use crate::Result;
 
@@ -63,11 +65,13 @@ impl BufferPool {
     /// Panics if there are no more blocks to read from the file.
     pub async fn read_block(
         &self,
-        file: Arc<File>,
+        path: &Path,
         block_size: u64,
         source_size: u64,
         offset: &AtomicU64,
     ) -> Result<Block> {
+        let mut file = File::open(path).await?;
+
         // Allocate a buffer from the pool for the read
         let mut buffer = self.alloc(block_size.try_into().expect("block size too large"));
 
@@ -91,14 +95,19 @@ impl BufferPool {
 
         // Perform the read at the offset
         let block_num = offset / block_size;
-        let buffer = spawn_blocking(move || -> Result<_> {
-            assert_eq!(buffer.len(), usize::try_from(block_size).unwrap());
-            let len = crate::os::fill_buffer(&file, &mut buffer, offset)?;
-            buffer.truncate(len);
-            Ok(buffer)
-        })
-        .await
-        .expect("failed to join blocking task")?;
+        file.seek(std::io::SeekFrom::Start(offset)).await?;
+
+        // Fill the entire buffer
+        let mut len = 0;
+        while len < buffer.len() {
+            match file.read(&mut buffer[len..]).await? {
+                0 => break,
+                n => len += n,
+            }
+        }
+
+        // Truncate in case we reached EOF
+        buffer.truncate(len);
 
         // A block should never be empty
         assert!(!buffer.is_empty(), "an empty block was read");

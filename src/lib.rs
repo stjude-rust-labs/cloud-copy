@@ -56,7 +56,6 @@ mod backend;
 pub mod cli;
 mod config;
 mod generator;
-mod os;
 mod pool;
 mod streams;
 mod transfer;

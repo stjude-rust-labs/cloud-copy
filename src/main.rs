@@ -268,7 +268,7 @@ async fn terminate(cancel: CancellationToken) {
     use tracing::info;
 
     let mut signal = ctrl_c().expect("failed to create ctrl-c handler");
-    signal.await;
+    signal.recv().await;
 
     info!("received Ctrl-C signal: initiating shutdown");
     cancel.cancel();
