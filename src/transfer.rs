@@ -1,6 +1,5 @@
 //! Implementation of file transfers.
 
-use std::fs::File;
 use std::io::SeekFrom;
 use std::path::Path;
 use std::sync::Arc;
@@ -395,13 +394,12 @@ where
             }
         } else {
             // Create a stream of tasks for uploading the blocks
-            let file = Arc::new(File::open(source)?);
             let offset = Arc::new(AtomicU64::new(0));
             let mut stream = stream::iter(0..info.num_blocks)
                 .map(|_| {
+                    let source= source.to_path_buf();
                     let inner = self.clone();
                     let upload = upload.clone();
-                    let file = file.clone();
                     let offset = offset.clone();
                     let cancel = cancel.clone();
 
@@ -409,7 +407,7 @@ where
                         // Read the block (do not retry if this fails)
                         let block = inner
                             .pool
-                            .read_block(file, info.block_size, info.file_size, &offset)
+                            .read_block(&source, info.block_size, info.file_size, &offset)
                             .await?;
 
                         let block_num = block.num();
