@@ -350,28 +350,11 @@ where
     /// Uploads a file with blocks.
     async fn upload(
         self: Arc<Self>,
+        upload: Arc<B::Upload>,
         source: &Path,
-        destination: Url,
         info: UploadInfo,
         cancel: CancellationToken,
     ) -> Result<()> {
-        // Create the upload (retryable)
-        let upload = Arc::new(
-            Retry::spawn_notify(
-                self.backend.config().retry_durations(),
-                || async {
-                    select! {
-                        biased;
-                        _ = cancel.cancelled() => Err(Error::Canceled),
-                        r =  self.backend.new_upload(destination.clone()) => r,
-                    }
-                    .map_err(Error::into_retry_error)
-                },
-                notify_retry,
-            )
-            .await?,
-        );
-
         let mut parts = vec![Default::default(); info.num_blocks as usize];
 
         if info.num_blocks == 0 {
@@ -663,6 +646,25 @@ where
             source = source.display()
         );
 
+        // Create the upload (retryable)
+        // This is performed before we send transfer events in case the resource already
+        // exists and we're not overwriting
+        let upload = Arc::new(
+            Retry::spawn_notify(
+                self.inner.backend.config().retry_durations(),
+                || async {
+                    select! {
+                        biased;
+                        _ = self.cancel.cancelled() => Err(Error::Canceled),
+                        r =  self.inner.backend.new_upload(destination.clone()) => r,
+                    }
+                    .map_err(Error::into_retry_error)
+                },
+                notify_retry,
+            )
+            .await?,
+        );
+
         if let Some(events) = self.inner.backend.events() {
             events
                 .send(TransferEvent::TransferStarted {
@@ -684,7 +686,7 @@ where
         let result = self
             .inner
             .clone()
-            .upload(source, destination, info, self.cancel.clone())
+            .upload(upload, source, info, self.cancel.clone())
             .await;
 
         if let Some(events) = self.inner.backend.events() {
