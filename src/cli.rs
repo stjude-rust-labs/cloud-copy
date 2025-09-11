@@ -175,7 +175,7 @@ pub async fn handle_events(
                         }
                 }
                 Ok(TransferEvent::TransferCompleted { id, failed }) => {
-                    if !failed && let Some(transfer) = transfers.remove(&id) {
+                    if let Some(transfer) = transfers.remove(&id) && !failed {
                         stats.files += 1;
                         stats.bytes += transfer.transferred;
                     }
