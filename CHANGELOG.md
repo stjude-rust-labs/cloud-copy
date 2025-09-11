@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## Unreleased
 
+## 0.2.1 - 09-11-2025
+
 #### Fixed
 
 * Fixed progress showing for remote resource that already exists ([#15](https://github.com/stjude-rust-labs/cloud-copy/pull/15)).
