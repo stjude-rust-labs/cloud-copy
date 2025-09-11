@@ -9,6 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 #### Fixed
 
+* Fixed progress showing for remote resource that already exists ([#15](https://github.com/stjude-rust-labs/cloud-copy/pull/15)).
 * Fixed progress bar not being removed for failed transfers ([#14](https://github.com/stjude-rust-labs/cloud-copy/pull/14)).
 
 ## 0.2.0 - 09-10-2025
