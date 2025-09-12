@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## Unreleased
 
+#### Fixed
+
+* Only log message for an upload once the upload has been created ([#17](https://github.com/stjude-rust-labs/cloud-copy/pull/17)).
+
 ## 0.2.1 - 09-11-2025
 
 #### Fixed
