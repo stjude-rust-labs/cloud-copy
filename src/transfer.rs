@@ -624,6 +624,25 @@ where
 
     /// Uploads the given file to the given destination.
     async fn upload_file(&self, source: &Path, destination: Url, file_size: u64) -> Result<()> {
+        // Create the upload (retryable)
+        // This is performed before we send transfer events in case the resource already
+        // exists and we're not overwriting
+        let upload = Arc::new(
+            Retry::spawn_notify(
+                self.inner.backend.config().retry_durations(),
+                || async {
+                    select! {
+                        biased;
+                        _ = self.cancel.cancelled() => Err(Error::Canceled),
+                        r =  self.inner.backend.new_upload(destination.clone()) => r,
+                    }
+                    .map_err(Error::into_retry_error)
+                },
+                notify_retry,
+            )
+            .await?,
+        );
+
         info!(
             "uploading `{source}` to `{destination}`",
             source = source.display(),
@@ -644,25 +663,6 @@ where
             "file `{source}` is {file_size} bytes and will be uploaded with {num_blocks} block(s) \
              of size {block_size}",
             source = source.display()
-        );
-
-        // Create the upload (retryable)
-        // This is performed before we send transfer events in case the resource already
-        // exists and we're not overwriting
-        let upload = Arc::new(
-            Retry::spawn_notify(
-                self.inner.backend.config().retry_durations(),
-                || async {
-                    select! {
-                        biased;
-                        _ = self.cancel.cancelled() => Err(Error::Canceled),
-                        r =  self.inner.backend.new_upload(destination.clone()) => r,
-                    }
-                    .map_err(Error::into_retry_error)
-                },
-                notify_retry,
-            )
-            .await?,
         );
 
         if let Some(events) = self.inner.backend.events() {
