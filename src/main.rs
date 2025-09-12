@@ -69,7 +69,7 @@ struct Args {
     retries: Option<usize>,
 
     /// The AWS Access Key ID to use.
-    #[clap(long, env, value_name = "ID")]
+    #[clap(long, env, value_name = "ID", requires = "aws_secret_access_key")]
     aws_access_key_id: Option<String>,
 
     /// The AWS Secret Access Key to use.
@@ -87,7 +87,7 @@ struct Args {
     aws_default_region: Option<String>,
 
     /// The Google Cloud Storage HMAC access key to use.
-    #[clap(long, env, value_name = "KEY")]
+    #[clap(long, env, value_name = "KEY", requires = "google_hmac_secret")]
     google_hmac_access_key: Option<String>,
 
     /// The Google Cloud Storage HMAC secret to use.
