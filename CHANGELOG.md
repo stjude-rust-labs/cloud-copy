@@ -9,6 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 #### Fixed
 
+* Ensure required auth options for CLI ([#18](https://github.com/stjude-rust-labs/cloud-copy/pull/18)).
 * Only log message for an upload once the upload has been created ([#17](https://github.com/stjude-rust-labs/cloud-copy/pull/17)).
 
 ## 0.2.1 - 09-11-2025
