@@ -211,7 +211,9 @@ async fn run(cancel: CancellationToken) -> Result<()> {
     let stats = handler.await.expect("failed to join events handler");
 
     // Print the statistics upon success
-    if result.is_ok() {
+    if result.is_ok()
+        && let Some(stats) = stats
+    {
         let delta = end - start;
         let seconds = delta.num_seconds();
 

@@ -8,7 +8,6 @@ use tokio::sync::broadcast::error::RecvError;
 use tokio::sync::broadcast::{self};
 use tokio_util::sync::CancellationToken;
 use tracing::Span;
-use tracing::warn;
 use tracing::warn_span;
 use tracing_indicatif::span_ext::IndicatifSpanExt;
 use tracing_indicatif::style::ProgressStyle;
@@ -102,11 +101,17 @@ pub struct TransferStats {
 /// being transferred.
 ///
 /// Used from CLI implementations.
+///
+/// Returns `None` if the event stream lagged and reliable statistics aren't
+/// available.
+///
+/// Returns `Some` if the event stream did not lag and reliable statistics are
+/// available.
 #[cfg_attr(docsrs, doc(cfg(feature = "cli")))]
 pub async fn handle_events(
     mut events: broadcast::Receiver<TransferEvent>,
     cancel: CancellationToken,
-) -> TransferStats {
+) -> Option<TransferStats> {
     struct BlockTransferState {
         /// The number of bytes that were transferred for the block.
         transferred: u64,
@@ -121,75 +126,113 @@ pub async fn handle_events(
         block_transfers: HashMap<u64, BlockTransferState>,
     }
 
+    let mut indeterminate = None;
     let mut transfers = HashMap::new();
-    let mut warned = false;
     let mut stats = TransferStats::default();
 
     loop {
         tokio::select! {
             _ = cancel.cancelled() => break,
             event = events.recv() => match event {
-                Ok(TransferEvent::TransferStarted { id, path, size, .. }) => {
-                    let bar = warn_span!("progress");
+                Ok(event) if indeterminate.is_none() => match event {
+                    TransferEvent::TransferStarted { id, path, size, .. } => {
+                        let bar = warn_span!("progress");
 
-                    let style = match size {
-                        Some(size) => {
-                            bar.pb_set_length(size);
-                            ProgressStyle::with_template(
-                                "[{elapsed_precise:.cyan/blue}] {bar:40.cyan/blue} {bytes:.cyan/blue} / {total_bytes:.cyan/blue} ({bytes_per_sec:.cyan/blue}) [ETA {eta_precise:.cyan/blue}]: {msg}",
-                            ).unwrap()
-                        }
-                        None => {
-                            ProgressStyle::with_template(
-                                "[{elapsed_precise:.cyan/blue}] {spinner:.cyan/blue} {bytes:.cyan/blue} ({bytes_per_sec:.cyan/blue}): {msg}",
-                            ).unwrap()
-                        }
-                    };
+                        let style = match size {
+                            Some(size) => {
+                                bar.pb_set_length(size);
+                                ProgressStyle::with_template(
+                                    "[{elapsed_precise:.cyan/blue}] {bar:40.cyan/blue} \
+                                    {bytes:.cyan/blue} / {total_bytes:.cyan/blue} \
+                                    ({bytes_per_sec:.cyan/blue}) [ETA {eta_precise:.cyan/blue}]: \
+                                    {msg}",
+                                )
+                                .unwrap()
+                            }
+                            None => ProgressStyle::with_template(
+                                "[{elapsed_precise:.cyan/blue}] {spinner:.cyan/blue} \
+                                {bytes:.cyan/blue} ({bytes_per_sec:.cyan/blue}): {msg}",
+                            )
+                            .unwrap(),
+                        };
 
-                    bar.pb_set_style(&style);
-                    bar.pb_set_message(path.to_str().unwrap_or("<path not UTF-8>"));
-                    bar.pb_start();
-                    transfers.insert(id, TransferState { bar, transferred: 0, block_transfers: HashMap::new() });
-                }
-                Ok(TransferEvent::BlockStarted { id, block, .. }) => {
-                    if let Some(transfer) = transfers.get_mut(&id) {
-                        transfer.block_transfers.insert(block, BlockTransferState { transferred: 0 });
+                        bar.pb_set_style(&style);
+                        bar.pb_set_message(path.to_str().unwrap_or("<path not UTF-8>"));
+                        bar.pb_start();
+                        transfers.insert(
+                            id,
+                            TransferState {
+                                bar,
+                                transferred: 0,
+                                block_transfers: HashMap::new(),
+                            },
+                        );
                     }
-                }
-                Ok(TransferEvent::BlockProgress { id, block, transferred }) => {
-                    if let Some(transfer) = transfers.get_mut(&id)
-                        && let Some(block) = transfer.block_transfers.get_mut(&block) {
+                    TransferEvent::BlockStarted { id, block, .. } => {
+                        if let Some(transfer) = transfers.get_mut(&id) {
+                            transfer
+                                .block_transfers
+                                .insert(block, BlockTransferState { transferred: 0 });
+                        }
+                    }
+                    TransferEvent::BlockProgress {
+                        id,
+                        block,
+                        transferred,
+                    } => {
+                        if let Some(transfer) = transfers.get_mut(&id)
+                            && let Some(block) = transfer.block_transfers.get_mut(&block)
+                        {
                             transfer.transferred += transferred - block.transferred;
                             block.transferred = transferred;
                             transfer.bar.pb_set_position(transfer.transferred);
                         }
-                }
-                Ok(TransferEvent::BlockCompleted { id, block, failed }) => {
-                    if let Some(transfer) = transfers.get_mut(&id)
-                        && let Some(block) = transfer.block_transfers.get_mut(&block) {
+                    }
+                    TransferEvent::BlockCompleted { id, block, failed } => {
+                        if let Some(transfer) = transfers.get_mut(&id)
+                            && let Some(block) = transfer.block_transfers.get_mut(&block)
+                        {
                             if failed {
                                 transfer.transferred -= block.transferred;
                             }
 
                             transfer.bar.pb_set_position(transfer.transferred);
                         }
-                }
-                Ok(TransferEvent::TransferCompleted { id, failed }) => {
-                    if let Some(transfer) = transfers.remove(&id) && !failed {
-                        stats.files += 1;
-                        stats.bytes += transfer.transferred;
                     }
-                }
+                    TransferEvent::TransferCompleted { id, failed } => {
+                        if let Some(transfer) = transfers.remove(&id)
+                            && !failed
+                        {
+                            stats.files += 1;
+                            stats.bytes += transfer.transferred;
+                        }
+                    }
+                },
+                Ok(_) => continue,
                 Err(RecvError::Closed) => break,
                 Err(RecvError::Lagged(_)) => {
-                    if !warned {
-                        warn!("event stream is lagging: progress may be incorrect");
-                        warned = true;
-                    }
+                    // Clear the state to remove existing progress bars
+                    transfers.clear();
+
+                    // Show a single spinner progress bar for the remainder of the stream
+                    let bar = warn_span!("progress");
+                    bar.pb_set_style(
+                        &ProgressStyle::with_template(
+                            "{spinner:.cyan/blue} transfer progress is unavailable due to missed events",
+                        )
+                        .unwrap(),
+                    );
+                    bar.pb_start();
+
+                    indeterminate = Some(bar);
                 }
             }
         }
     }
 
-    stats
+    if indeterminate.is_none() {
+        Some(stats)
+    } else {
+        None
+    }
 }

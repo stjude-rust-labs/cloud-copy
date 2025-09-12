@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## Unreleased
 
+#### Added
+
+* Display an indeterminate progress bar on event stream lag ([#19](https://github.com/stjude-rust-labs/cloud-copy/pull/19)).
+
 #### Fixed
 
 * Ensure required auth options for CLI ([#18](https://github.com/stjude-rust-labs/cloud-copy/pull/18)).
