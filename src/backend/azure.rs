@@ -618,7 +618,9 @@ impl StorageBackend for AzureBlobStorageBackend {
         }
 
         // The prefix should end with `/` to signify a directory.
-        prefix.push('/');
+        if !prefix.ends_with('/') {
+            prefix.push('/');
+        }
 
         {
             // Append the operation and block id to the URL
@@ -675,10 +677,8 @@ impl StorageBackend for AzureBlobStorageBackend {
             }
 
             paths.extend(results.blobs.items.into_iter().map(|b| {
-                b.name
-                    .strip_prefix(&prefix)
-                    .map(Into::into)
-                    .unwrap_or(b.name)
+                let name = b.name.strip_prefix(&prefix).unwrap_or(&b.name);
+                name.strip_prefix('/').unwrap_or(name).into()
             }));
 
             next = results.next.unwrap_or_default();
