@@ -734,6 +734,32 @@ pub fn rewrite_url<'a>(config: &Config, url: &'a Url) -> Result<Cow<'a, Url>> {
     }
 }
 
+/// Walks a given storage URL as if it were a directory.
+///
+/// Returns a list of relative paths from the given URL.
+///
+/// If the given storage URL is not a directory, an empty list is returned.
+pub async fn walk(config: Config, client: HttpClient, url: Url) -> Result<Vec<String>> {
+    if AzureBlobStorageBackend::is_supported_url(&config, &url) {
+        let url = AzureBlobStorageBackend::rewrite_url(&config, &url)?;
+        AzureBlobStorageBackend::new(config, client, None)
+            .walk(url.into_owned())
+            .await
+    } else if S3StorageBackend::is_supported_url(&config, &url) {
+        let url = S3StorageBackend::rewrite_url(&config, &url)?;
+        S3StorageBackend::new(config, client, None)
+            .walk(url.into_owned())
+            .await
+    } else if GoogleStorageBackend::is_supported_url(&config, &url) {
+        let url = GoogleStorageBackend::rewrite_url(&config, &url)?;
+        GoogleStorageBackend::new(config, client, None)
+            .walk(url.into_owned())
+            .await
+    } else {
+        Ok(Default::default())
+    }
+}
+
 #[cfg(test)]
 mod test {
     use super::*;
