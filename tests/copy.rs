@@ -752,10 +752,7 @@ async fn walk() -> Result<()> {
         let files = cloud_copy::walk(config.clone(), client.clone(), url)
             .await
             .expect("should walk");
-        assert_eq!(
-            files,
-            &["/0", "/1", "/2", "/3", "/4", "/5", "/6", "/7", "/8", "/9"]
-        );
+        assert_eq!(files, &["0", "1", "2", "3", "4", "5", "6", "7", "8", "9"]);
     }
 
     Ok(())

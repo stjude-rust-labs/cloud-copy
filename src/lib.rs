@@ -739,7 +739,13 @@ pub fn rewrite_url<'a>(config: &Config, url: &'a Url) -> Result<Cow<'a, Url>> {
 /// Returns a list of relative paths from the given URL.
 ///
 /// If the given storage URL is not a directory, an empty list is returned.
-pub async fn walk(config: Config, client: HttpClient, url: Url) -> Result<Vec<String>> {
+pub async fn walk(config: Config, client: HttpClient, mut url: Url) -> Result<Vec<String>> {
+    if let Ok(mut segments) = url.path_segments_mut() {
+        // Push an empty segment to treat the URL as a directory
+        // This ensures there is no leading slash in the returned relative paths.
+        segments.pop_if_empty().push("");
+    }
+
     if AzureBlobStorageBackend::is_supported_url(&config, &url) {
         let url = AzureBlobStorageBackend::rewrite_url(&config, &url)?;
         AzureBlobStorageBackend::new(config, client, None)
@@ -756,7 +762,7 @@ pub async fn walk(config: Config, client: HttpClient, url: Url) -> Result<Vec<St
             .walk(url.into_owned())
             .await
     } else {
-        Ok(Default::default())
+        Err(Error::UnsupportedUrl(url))
     }
 }
 
