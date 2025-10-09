@@ -12,10 +12,14 @@ use cloud_copy::AzureConfig;
 use cloud_copy::Config;
 use cloud_copy::Error;
 use cloud_copy::HttpClient;
+use cloud_copy::Location;
 use cloud_copy::S3AuthConfig;
 use cloud_copy::S3Config;
+use cloud_copy::TransferEvent;
+use cloud_copy::rewrite_url;
 use futures::FutureExt;
 use futures::future::LocalBoxFuture;
+use pretty_assertions::assert_eq;
 use rand::Rng;
 use tempfile::NamedTempFile;
 use tempfile::tempdir;
@@ -24,6 +28,8 @@ use tokio::io::AsyncReadExt;
 use tokio::io::AsyncWriteExt;
 use tokio::io::BufReader;
 use tokio::io::BufWriter;
+use tokio::sync::broadcast;
+use tokio::sync::oneshot;
 use tokio_util::sync::CancellationToken;
 use url::Url;
 use walkdir::WalkDir;
@@ -50,6 +56,7 @@ async fn write_random_bytes(file: File, mut size: usize) -> Result<()> {
             .context("failed to write random file")?;
     }
 
+    writer.flush().await.expect("failed to flush file");
     Ok(())
 }
 
@@ -574,6 +581,130 @@ async fn link_to_cache() -> Result<()> {
         2,
         "expected two links to the file"
     );
+
+    Ok(())
+}
+
+// Tests that transfer events are sent as expected.
+#[tokio::test]
+async fn events() -> Result<()> {
+    const FILE_SIZE: u64 = 1024;
+
+    let test = format!("{random}", random = Alphanumeric::new(10));
+
+    let config = config();
+    let client = HttpClient::default();
+    let cancel = CancellationToken::new();
+
+    // Create a new temp file
+    let (file, source) = NamedTempFile::new()
+        .context("failed to create temp file")?
+        .into_parts();
+    write_random_bytes(file.into(), FILE_SIZE as usize)
+        .await
+        .context("failed to write random bytes into file")?;
+
+    // Create another temporary file path for the download
+    let destination = NamedTempFile::new()
+        .context("failed to create temp file")?
+        .into_temp_path();
+
+    let (events_tx, mut events_rx) = broadcast::channel(1000);
+    let (urls_tx, urls_rx) = oneshot::channel();
+
+    tokio::spawn(async move {
+        let mut urls = Vec::new();
+        loop {
+            match events_rx.recv().await {
+                Ok(event) => match event {
+                    TransferEvent::TransferStarted {
+                        source,
+                        destination,
+                        blocks,
+                        size,
+                        ..
+                    } => {
+                        assert_eq!(blocks, 1, "unexpected number of blocks");
+                        assert_eq!(size, Some(FILE_SIZE), "unexpected file size");
+
+                        if let Location::Url(url) = source {
+                            urls.push(url);
+                        }
+
+                        if let Location::Url(url) = destination {
+                            urls.push(url);
+                        }
+                    }
+                    TransferEvent::BlockStarted { block, size, .. } => {
+                        assert_eq!(block, 0, "unexpected block id");
+                        assert_eq!(size, Some(FILE_SIZE), "unexpected file size");
+                    }
+                    TransferEvent::BlockProgress { .. } => continue,
+                    TransferEvent::BlockCompleted { block, failed, .. } => {
+                        assert_eq!(block, 0, "unexpected block id");
+                        assert!(!failed, "block failed to transfer");
+                    }
+                    TransferEvent::TransferCompleted { failed, .. } => {
+                        assert!(!failed, "file failed to transfer");
+                    }
+                },
+                Err(broadcast::error::RecvError::Closed) => break,
+                Err(broadcast::error::RecvError::Lagged(_)) => panic!("event channel lagged"),
+            }
+        }
+
+        urls_tx.send(urls).expect("failed to send urls");
+    });
+
+    let expected = urls(&test);
+    for url in &expected {
+        // Copy the local file to the cloud
+        cloud_copy::copy(
+            config.clone(),
+            client.clone(),
+            &*source,
+            url,
+            cancel.clone(),
+            Some(events_tx.clone()),
+        )
+        .await
+        .context("failed to upload file")?;
+
+        // Copy the file from the cloud to a local file
+        cloud_copy::copy(
+            config.clone(),
+            client.clone(),
+            url,
+            &*destination,
+            cancel.clone(),
+            Some(events_tx.clone()),
+        )
+        .await
+        .context("failed to download file")?;
+
+        // Ensure the uploaded file and the downloaded file are the same
+        if !same_file_content(&source, &destination)
+            .await
+            .context("failed to compare files")?
+        {
+            bail!("the downloaded file is not equal to the uploaded");
+        }
+    }
+
+    drop(events_tx);
+
+    // The returned URLs should have two entries per expected
+    let urls = urls_rx.await.expect("failed to receive events");
+    assert!(!urls.is_empty());
+    for (i, expected) in expected.iter().enumerate() {
+        let expected = rewrite_url(&config, expected).expect("URL should rewrite");
+        assert_eq!(&urls[i * 2], expected.as_ref(), "unexpected upload URL");
+        assert_eq!(
+            &urls[(i * 2) + 1],
+            expected.as_ref(),
+            "unexpected download URL"
+        );
+    }
 
     Ok(())
 }

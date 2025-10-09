@@ -65,6 +65,7 @@ walkdir = "2.5.0"
 
 [dev-dependencies]
 anyhow = { version = "1.0.99" }
+pretty_assertions = "1.4.1"
 
 [lints.rust]
 missing_docs = "warn"

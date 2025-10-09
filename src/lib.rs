@@ -94,24 +94,24 @@ fn notify_retry(e: &Error, duration: Duration) {
 
 /// Represents either a local or remote location.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
-pub enum Location<'a> {
+pub enum Location {
     /// The location is a local path.
-    Path(&'a Path),
+    Path(PathBuf),
     /// The location is a URL.
-    Url(Cow<'a, Url>),
+    Url(Url),
 }
 
-impl<'a> Location<'a> {
+impl Location {
     /// Constructs a new location from a string.
-    pub fn new(s: &'a str) -> Self {
+    pub fn new(s: &str) -> Self {
         match s.parse::<Url>() {
-            Ok(url) => Self::Url(Cow::Owned(url)),
-            Err(_) => Self::Path(Path::new(s)),
+            Ok(url) => Self::Url(url),
+            Err(_) => Self::Path(s.into()),
         }
     }
 }
 
-impl fmt::Display for Location<'_> {
+impl fmt::Display for Location {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::Path(path) => write!(f, "{path}", path = path.display()),
@@ -120,39 +120,45 @@ impl fmt::Display for Location<'_> {
     }
 }
 
-impl<'a> From<&'a str> for Location<'a> {
-    fn from(value: &'a str) -> Self {
+impl From<&str> for Location {
+    fn from(value: &str) -> Self {
         Self::new(value)
     }
 }
 
-impl<'a> From<&'a String> for Location<'a> {
-    fn from(value: &'a String) -> Self {
+impl From<&String> for Location {
+    fn from(value: &String) -> Self {
         Self::new(value)
     }
 }
 
-impl<'a> From<&'a Path> for Location<'a> {
-    fn from(value: &'a Path) -> Self {
+impl From<&Path> for Location {
+    fn from(value: &Path) -> Self {
+        Self::Path(value.to_path_buf())
+    }
+}
+
+impl From<&PathBuf> for Location {
+    fn from(value: &PathBuf) -> Self {
+        Self::Path(value.clone())
+    }
+}
+
+impl From<PathBuf> for Location {
+    fn from(value: PathBuf) -> Self {
         Self::Path(value)
     }
 }
 
-impl<'a> From<&'a PathBuf> for Location<'a> {
-    fn from(value: &'a PathBuf) -> Self {
-        Self::Path(value.as_path())
+impl From<&Url> for Location {
+    fn from(value: &Url) -> Self {
+        Self::Url(value.clone())
     }
 }
 
-impl<'a> From<&'a Url> for Location<'a> {
-    fn from(value: &'a Url) -> Self {
-        Self::Url(Cow::Borrowed(value))
-    }
-}
-
-impl From<Url> for Location<'_> {
+impl From<Url> for Location {
     fn from(value: Url) -> Self {
-        Self::Url(Cow::Owned(value))
+        Self::Url(value)
     }
 }
 
@@ -440,8 +446,10 @@ pub enum TransferEvent {
         ///
         /// This is a monotonic counter that is increased every transfer.
         id: u64,
-        /// The path of the file being transferred.
-        path: PathBuf,
+        /// The location of the source.
+        source: Location,
+        /// The location of the destination.
+        destination: Location,
         /// The number of blocks in the file.
         blocks: u64,
         /// The size of the file being transferred.
@@ -527,7 +535,8 @@ async fn copy_local(
         events
             .send(TransferEvent::TransferStarted {
                 id: ID,
-                path: destination.to_path_buf(),
+                source: Location::Path(source.to_path_buf()),
+                destination: Location::Path(destination.to_path_buf()),
                 blocks: 1,
                 size: Some(size),
             })
@@ -622,8 +631,8 @@ async fn copy_local(
 pub async fn copy(
     config: Config,
     client: HttpClient,
-    source: impl Into<Location<'_>>,
-    destination: impl Into<Location<'_>>,
+    source: impl Into<Location>,
+    destination: impl Into<Location>,
     cancel: CancellationToken,
     events: Option<broadcast::Sender<TransferEvent>>,
 ) -> Result<()> {
@@ -637,12 +646,12 @@ pub async fn copy(
             }
 
             // Two local locations, just perform a copy
-            Ok(copy_local(source, destination, cancel, events).await?)
+            Ok(copy_local(&source, &destination, cancel, events).await?)
         }
         (Location::Path(source), Location::Url(destination)) => {
             // Perform a copy if the the destination is a local path
             if let Some(destination) = destination.to_local_path()? {
-                return copy_local(source, &destination, cancel, events).await;
+                return copy_local(&source, &destination, cancel, events).await;
             }
 
             if AzureBlobStorageBackend::is_supported_url(&config, &destination) {
@@ -661,7 +670,7 @@ pub async fn copy(
                     FileTransfer::new(GoogleStorageBackend::new(config, client, events), cancel);
                 transfer.upload(source, destination.into_owned()).await
             } else {
-                Err(Error::UnsupportedUrl(destination.into_owned()))
+                Err(Error::UnsupportedUrl(destination))
             }
         }
         (Location::Url(source), Location::Path(destination)) => {
@@ -671,7 +680,7 @@ pub async fn copy(
 
             // Perform a copy if the the source is a local path
             if let Some(source) = source.to_local_path()? {
-                return copy_local(&source, destination, cancel, events).await;
+                return copy_local(&source, &destination, cancel, events).await;
             }
 
             if AzureBlobStorageBackend::is_supported_url(&config, &source) {
@@ -692,7 +701,7 @@ pub async fn copy(
             } else {
                 let transfer =
                     FileTransfer::new(GenericStorageBackend::new(config, client, events), cancel);
-                transfer.download(source.into_owned(), destination).await
+                transfer.download(source, destination).await
             }
         }
         (Location::Url(source), Location::Url(destination)) => {
