@@ -31,6 +31,7 @@ use url::Url;
 use walkdir::WalkDir;
 
 use crate::Error;
+use crate::Location;
 use crate::Result;
 use crate::TransferEvent;
 use crate::UrlExt;
@@ -124,6 +125,7 @@ where
             .get(header::CONTENT_LENGTH)
             .and_then(|v| v.to_str().ok()?.parse().ok());
 
+        let download_source = source.clone();
         let transfer = async {
             // Start by creating the destination's parent directory
             let parent = destination.parent().ok_or(Error::InvalidPath)?;
@@ -140,8 +142,15 @@ where
                 .into_temp_path();
 
             // Download the file with resumable retries
-            self.download_with_resume(id, source, &temp, content_length, etag, cancel.clone())
-                .await?;
+            self.download_with_resume(
+                id,
+                download_source,
+                &temp,
+                content_length,
+                etag,
+                cancel.clone(),
+            )
+            .await?;
 
             // Persist the temp file to the destination
             temp.persist_noclobber(destination)
@@ -155,7 +164,8 @@ where
             events
                 .send(TransferEvent::TransferStarted {
                     id,
-                    path: destination.to_path_buf(),
+                    source: Location::Url(source),
+                    destination: Location::Path(destination.to_path_buf()),
                     blocks: 1,
                     size: content_length,
                 })
@@ -669,7 +679,8 @@ where
             events
                 .send(TransferEvent::TransferStarted {
                     id,
-                    path: source.to_path_buf(),
+                    source: Location::Path(source.to_path_buf()),
+                    destination: Location::Url(destination),
                     blocks: num_blocks,
                     size: Some(file_size),
                 })

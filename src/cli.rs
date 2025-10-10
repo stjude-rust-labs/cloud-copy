@@ -12,7 +12,9 @@ use tracing::warn_span;
 use tracing_indicatif::span_ext::IndicatifSpanExt;
 use tracing_indicatif::style::ProgressStyle;
 
+use crate::Location;
 use crate::TransferEvent;
+use crate::UrlExt;
 
 /// Extension methods for [`TimeDelta`].
 #[cfg_attr(docsrs, doc(cfg(feature = "cli")))]
@@ -135,14 +137,14 @@ pub async fn handle_events(
             _ = cancel.cancelled() => break,
             event = events.recv() => match event {
                 Ok(event) if indeterminate.is_none() => match event {
-                    TransferEvent::TransferStarted { id, path, size, .. } => {
+                    TransferEvent::TransferStarted { id, source, destination, size, .. } => {
                         let bar = warn_span!("progress");
 
                         let style = match size {
                             Some(size) => {
                                 bar.pb_set_length(size);
                                 ProgressStyle::with_template(
-                                    "[{elapsed_precise:.cyan/blue}] {bar:40.cyan/blue} \
+                                    "[{elapsed_precise:.cyan/blue}] {bar:20.cyan/blue} \
                                     {bytes:.cyan/blue} / {total_bytes:.cyan/blue} \
                                     ({bytes_per_sec:.cyan/blue}) [ETA {eta_precise:.cyan/blue}]: \
                                     {msg}",
@@ -156,8 +158,17 @@ pub async fn handle_events(
                             .unwrap(),
                         };
 
+                        let message = match (&source, &destination) {
+                            // Use the source path for local file copies
+                            (Location::Path(path), Location::Path(_)) => format!("copying `{path}`", path = path.to_str().unwrap_or("<path not UTF-8>")),
+                            // Use the source path for uploads
+                            (Location::Path(path), _) => format!("uploading `{path}`", path = path.to_str().unwrap_or("<path not UTF-8>")),
+                            // Use the remote URL for downloads
+                            (Location::Url(url), _) => format!("downloading `{url}`", url = url.display())
+                        };
+
                         bar.pb_set_style(&style);
-                        bar.pb_set_message(path.to_str().unwrap_or("<path not UTF-8>"));
+                        bar.pb_set_message(&message);
                         bar.pb_start();
                         transfers.insert(
                             id,
