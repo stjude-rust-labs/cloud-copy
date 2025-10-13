@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## Unreleased
 
+#### Added
+
+* Implemented a `walk` function that can be used to glob a cloud storage URL ([#24](https://github.com/stjude-rust-labs/cloud-copy/pull/24)).
+
 #### Fixed
 
 * Improved progress bar message ([#23](https://github.com/stjude-rust-labs/cloud-copy/pull/23)).

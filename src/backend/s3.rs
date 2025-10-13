@@ -759,9 +759,11 @@ impl StorageBackend for S3StorageBackend {
 
         let (bucket, path) = url.bucket_and_path();
 
-        // The prefix should end with `/` to signify a directory.
         let mut prefix = path.strip_prefix('/').unwrap_or(path).to_string();
-        prefix.push('/');
+        // The prefix should end with `/` to signify a directory.
+        if !prefix.ends_with('/') {
+            prefix.push('/');
+        }
 
         // Format the request to always use the virtual-host style URL
         let domain = url.domain().expect("URL should have domain");
@@ -829,12 +831,10 @@ impl StorageBackend for S3StorageBackend {
                 return Ok(paths);
             }
 
-            paths.extend(
-                results
-                    .contents
-                    .into_iter()
-                    .map(|c| c.key.strip_prefix(&prefix).map(Into::into).unwrap_or(c.key)),
-            );
+            paths.extend(results.contents.into_iter().map(|c| {
+                let key = c.key.strip_prefix(&prefix).unwrap_or(&c.key);
+                key.strip_prefix('/').unwrap_or(key).into()
+            }));
 
             token = results.token.unwrap_or_default();
             if token.is_empty() {

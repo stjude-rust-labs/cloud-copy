@@ -585,7 +585,7 @@ async fn link_to_cache() -> Result<()> {
     Ok(())
 }
 
-// Tests that transfer events are sent as expected.
+/// Tests that transfer events are sent as expected.
 #[tokio::test]
 async fn events() -> Result<()> {
     const FILE_SIZE: u64 = 1024;
@@ -703,6 +703,59 @@ async fn events() -> Result<()> {
             &urls[(i * 2) + 1],
             expected.as_ref(),
             "unexpected download URL"
+        );
+    }
+
+    Ok(())
+}
+
+/// Tests that we can walk cloud URLs.
+#[tokio::test]
+async fn walk() -> Result<()> {
+    const FILE_SIZE: u64 = 1024;
+
+    let test = format!("{random}", random = Alphanumeric::new(10));
+
+    let config = config();
+    let client = HttpClient::default();
+    let cancel = CancellationToken::new();
+
+    // Create a new temp file
+    let (file, source) = NamedTempFile::new()
+        .context("failed to create temp file")?
+        .into_parts();
+    write_random_bytes(file.into(), FILE_SIZE as usize)
+        .await
+        .context("failed to write random bytes into file")?;
+
+    for url in urls(&test) {
+        for i in 0..10 {
+            let mut url = url.clone();
+            url.path_segments_mut()
+                .unwrap()
+                .push("")
+                .push(&i.to_string());
+
+            // Copy the local file to the cloud
+            cloud_copy::copy(
+                config.clone(),
+                client.clone(),
+                &*source,
+                url,
+                cancel.clone(),
+                None,
+            )
+            .await
+            .context("failed to upload file")?;
+        }
+
+        let files = cloud_copy::walk(config.clone(), client.clone(), url.clone())
+            .await
+            .expect("should walk");
+        assert_eq!(
+            files,
+            &["0", "1", "2", "3", "4", "5", "6", "7", "8", "9"],
+            "unexpected walk output for URL `{url}`"
         );
     }
 
