@@ -14,7 +14,8 @@
 //! progress bars using the `tracing_indicatif` crate.
 
 #![deny(rustdoc::broken_intra_doc_links)]
-#![cfg_attr(docsrs, feature(doc_cfg))]
+// This is disabled until upstream crates are fixed for nightly
+//#![cfg_attr(docsrs, feature(doc_cfg))]
 
 use std::borrow::Cow;
 use std::fmt;
