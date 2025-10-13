@@ -7,12 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## Unreleased
 
+## 0.4.0 - 10-13-2025
+
 #### Added
 
 * Implemented a `walk` function that can be used to glob a cloud storage URL ([#24](https://github.com/stjude-rust-labs/cloud-copy/pull/24)).
 
 #### Fixed
 
+* Fixed Google Cloud Storage uploads not working ([#24](https://github.com/stjude-rust-labs/cloud-copy/pull/24)).
 * Improved progress bar message ([#23](https://github.com/stjude-rust-labs/cloud-copy/pull/23)).
 
 ## 0.3.0 - 09-15-2025
