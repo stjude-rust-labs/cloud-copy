@@ -785,11 +785,6 @@ impl StorageBackend for GoogleStorageBackend {
         create.query_pairs_mut().append_key_only("uploads");
 
         let date = Utc::now();
-
-        create.set_scheme("http").unwrap();
-        create.set_ip_host("127.0.0.1".parse().unwrap()).unwrap();
-        create.set_port(Some(9000)).unwrap();
-
         let mut request = self
             .client
             .post(create)
