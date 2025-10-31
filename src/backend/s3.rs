@@ -1,7 +1,6 @@
 //! Implementation of the S3 storage backend.
 
 use std::borrow::Cow;
-use std::sync::Arc;
 
 use bytes::Bytes;
 use chrono::DateTime;
@@ -44,9 +43,6 @@ const AWS_ROOT_DOMAIN: &str = "amazonaws.com";
 
 /// The root domain for localstack.
 const LOCALSTACK_ROOT_DOMAIN: &str = "localhost.localstack.cloud";
-
-/// The default S3 URL region.
-const DEFAULT_REGION: &str = "us-east-1";
 
 /// The maximum number of parts in an upload.
 const MAX_PARTS: u64 = 10000;
@@ -168,11 +164,11 @@ impl SignatureProvider for S3SignatureProvider<'_> {
     }
 
     fn access_key_id(&self) -> &str {
-        &self.auth.access_key_id
+        self.auth.access_key_id()
     }
 
     fn secret_access_key(&self) -> &str {
-        self.auth.secret_access_key.expose_secret()
+        self.auth.secret_access_key().expose_secret()
     }
 }
 
@@ -332,7 +328,7 @@ pub struct S3UploadPart {
 /// Represents an S3 file upload.
 pub struct S3Upload {
     /// The configuration to use for the upload.
-    config: Arc<Config>,
+    config: Config,
     /// The HTTP client to use for uploading.
     client: HttpClient,
     /// The URL of the object being uploaded.
@@ -384,7 +380,7 @@ impl Upload for S3Upload {
             .body(body)
             .build()?;
 
-        if let Some(auth) = &self.config.s3.auth {
+        if let Some(auth) = self.config.s3().auth() {
             append_authentication_header(auth, date, &mut request)?;
         }
 
@@ -446,7 +442,7 @@ impl Upload for S3Upload {
             .body(body)
             .build()?;
 
-        if let Some(auth) = &self.config.s3.auth {
+        if let Some(auth) = self.config.s3().auth() {
             append_authentication_header(auth, date, &mut request)?;
         }
 
@@ -462,7 +458,7 @@ impl Upload for S3Upload {
 /// Represents the S3 storage backend.
 pub struct S3StorageBackend {
     /// The config to use for transferring files.
-    config: Arc<Config>,
+    config: Config,
     /// The HTTP client to use for transferring files.
     client: HttpClient,
     /// The channel for sending transfer events.
@@ -477,7 +473,7 @@ impl S3StorageBackend {
         events: Option<broadcast::Sender<TransferEvent>>,
     ) -> Self {
         Self {
-            config: Arc::new(config),
+            config,
             client,
             events,
         }
@@ -504,7 +500,7 @@ impl StorageBackend for S3StorageBackend {
         const BLOCK_COUNT_INCREMENT: u64 = 50;
 
         // Return the block size if one was specified
-        if let Some(size) = self.config.block_size {
+        if let Some(size) = self.config.block_size() {
             if size > MAX_PART_SIZE {
                 return Err(S3Error::InvalidBlockSize.into());
             }
@@ -551,7 +547,7 @@ impl StorageBackend for S3StorageBackend {
                     // There must be at least two path segments
                     !region.is_empty()
                         && (domain.eq_ignore_ascii_case(AWS_ROOT_DOMAIN)
-                            || (config.s3.use_localstack
+                            || (config.s3().use_localstack()
                                 && domain.eq_ignore_ascii_case(LOCALSTACK_ROOT_DOMAIN)))
                         && url
                             .path_segments()
@@ -567,7 +563,7 @@ impl StorageBackend for S3StorageBackend {
                                 && !region.is_empty()
                                 && service.eq_ignore_ascii_case("s3")
                                 && (domain.eq_ignore_ascii_case(AWS_ROOT_DOMAIN)
-                                    || (config.s3.use_localstack
+                                    || (config.s3().use_localstack()
                                         && domain.eq_ignore_ascii_case(LOCALSTACK_ROOT_DOMAIN)))
                                 && url
                                     .path_segments()
@@ -585,7 +581,7 @@ impl StorageBackend for S3StorageBackend {
     fn rewrite_url<'a>(config: &Config, url: &'a Url) -> Result<Cow<'a, Url>> {
         match url.scheme() {
             "s3" => {
-                let region = config.s3.region.as_deref().unwrap_or(DEFAULT_REGION);
+                let region = config.s3().region();
                 let bucket = url.host_str().ok_or(S3Error::InvalidScheme)?;
                 let path = url.path();
 
@@ -593,7 +589,7 @@ impl StorageBackend for S3StorageBackend {
                     return Err(S3Error::InvalidScheme.into());
                 }
 
-                let (scheme, root, port) = if config.s3.use_localstack {
+                let (scheme, root, port) = if config.s3().use_localstack() {
                     ("http", LOCALSTACK_ROOT_DOMAIN, ":4566")
                 } else {
                     ("https", AWS_ROOT_DOMAIN, "")
@@ -650,7 +646,7 @@ impl StorageBackend for S3StorageBackend {
             .header(AWS_CONTENT_SHA256_HEADER, sha256_hex_string([]))
             .build()?;
 
-        if let Some(auth) = &self.config.s3.auth {
+        if let Some(auth) = self.config.s3().auth() {
             append_authentication_header(auth, date, &mut request)?;
         }
 
@@ -685,7 +681,7 @@ impl StorageBackend for S3StorageBackend {
             .header(AWS_CONTENT_SHA256_HEADER, sha256_hex_string([]))
             .build()?;
 
-        if let Some(auth) = &self.config.s3.auth {
+        if let Some(auth) = self.config.s3().auth() {
             append_authentication_header(auth, date, &mut request)?;
         }
 
@@ -721,7 +717,7 @@ impl StorageBackend for S3StorageBackend {
             .header(header::IF_MATCH, etag)
             .build()?;
 
-        if let Some(auth) = &self.config.s3.auth {
+        if let Some(auth) = self.config.s3().auth() {
             append_authentication_header(auth, date, &mut request)?;
         }
 
@@ -802,7 +798,7 @@ impl StorageBackend for S3StorageBackend {
                 .header(AWS_CONTENT_SHA256_HEADER, sha256_hex_string([]))
                 .build()?;
 
-            if let Some(auth) = &self.config.s3.auth {
+            if let Some(auth) = self.config.s3().auth() {
                 append_authentication_header(auth, date, &mut request)?;
             }
 
@@ -857,7 +853,7 @@ impl StorageBackend for S3StorageBackend {
         // S3 doesn't support conditional requests for `CreateMultipartUpload`.
         // Therefore, we must issue a HEAD request for the object if not overwriting.
         // See: https://docs.aws.amazon.com/AmazonS3/latest/userguide/conditional-writes.html#conditional-write-key-names
-        if !self.config.overwrite {
+        if !self.config.overwrite() {
             let response = self.head(url.clone(), false).await?;
             if response.status() != StatusCode::NOT_FOUND {
                 return Err(Error::RemoteDestinationExists(url));
@@ -878,7 +874,7 @@ impl StorageBackend for S3StorageBackend {
             .header(AWS_CONTENT_SHA256_HEADER, sha256_hex_string([]))
             .build()?;
 
-        if let Some(auth) = &self.config.s3.auth {
+        if let Some(auth) = self.config.s3().auth() {
             append_authentication_header(auth, date, &mut request)?;
         }
 

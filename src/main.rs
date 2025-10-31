@@ -12,13 +12,10 @@ use chrono::Utc;
 use clap::Parser;
 use clap_verbosity_flag::Verbosity;
 use clap_verbosity_flag::WarnLevel;
-use cloud_copy::AzureConfig;
 use cloud_copy::Config;
-use cloud_copy::GoogleAuthConfig;
 use cloud_copy::GoogleConfig;
 use cloud_copy::HttpClient;
 use cloud_copy::Location;
-use cloud_copy::S3AuthConfig;
 use cloud_copy::S3Config;
 use cloud_copy::cli::TimeDeltaExt;
 use cloud_copy::cli::handle_events;
@@ -109,38 +106,31 @@ impl Args {
     /// Converts the arguments into a `Config`, HTTP client, source, and
     /// destination.
     fn into_parts(self) -> (Config, HttpClient, String, String) {
-        let s3_auth =
+        let s3 =
             if let (Some(id), Some(key)) = (self.aws_access_key_id, self.aws_secret_access_key) {
-                Some(S3AuthConfig {
-                    access_key_id: id,
-                    secret_access_key: key,
-                })
+                S3Config::default().with_auth(id, key)
             } else {
-                None
-            };
+                S3Config::default()
+            }
+            .with_maybe_region(self.aws_default_region);
 
-        let google_auth = if let (Some(access_key), Some(secret)) =
+        let google = if let (Some(access_key), Some(secret)) =
             (self.google_hmac_access_key, self.google_hmac_secret)
         {
-            Some(GoogleAuthConfig { access_key, secret })
+            GoogleConfig::default().with_auth(access_key, secret)
         } else {
-            None
+            GoogleConfig::default()
         };
 
-        let config = Config {
-            link_to_cache: self.link_to_cache,
-            overwrite: self.overwrite,
-            block_size: self.block_size,
-            parallelism: self.parallelism,
-            retries: self.retries,
-            azure: AzureConfig { use_azurite: false },
-            s3: S3Config {
-                use_localstack: false,
-                region: self.aws_default_region,
-                auth: s3_auth,
-            },
-            google: GoogleConfig { auth: google_auth },
-        };
+        let config = Config::builder()
+            .with_link_to_cache(self.link_to_cache)
+            .with_overwrite(self.overwrite)
+            .with_maybe_block_size(self.block_size)
+            .with_maybe_parallelism(self.parallelism)
+            .with_maybe_retries(self.retries)
+            .with_s3(s3)
+            .with_google(google)
+            .build();
 
         let client = self
             .cache_dir

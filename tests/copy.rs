@@ -13,7 +13,6 @@ use cloud_copy::Config;
 use cloud_copy::Error;
 use cloud_copy::HttpClient;
 use cloud_copy::Location;
-use cloud_copy::S3AuthConfig;
 use cloud_copy::S3Config;
 use cloud_copy::TransferEvent;
 use cloud_copy::rewrite_url;
@@ -174,26 +173,22 @@ fn urls(test: &str) -> Vec<Url> {
     ]
 }
 
-fn config() -> Config {
-    Config {
-        overwrite: true,
-        azure: AzureConfig { use_azurite: true },
-        s3: S3Config {
-            use_localstack: true,
-            auth: Some(S3AuthConfig {
-                access_key_id: "test".to_string(),
-                secret_access_key: "test".into(),
-            }),
-            ..Default::default()
-        },
-        ..Default::default()
-    }
+fn config(overwrite: bool) -> Config {
+    Config::builder()
+        .with_overwrite(overwrite)
+        .with_azure(AzureConfig::default().with_use_azurite(true))
+        .with_s3(
+            S3Config::default()
+                .with_use_localstack(true)
+                .with_auth("test", "test"),
+        )
+        .build()
 }
 
 /// Round trips a file of a given size by uploading it to cloud storage and then
 /// downloading it again.
 async fn roundtrip_file(test: &str, size: usize) -> Result<()> {
-    let config = config();
+    let config = config(true);
     let client = HttpClient::default();
     let cancel = CancellationToken::new();
 
@@ -260,7 +255,7 @@ async fn copy_generic_url() -> Result<()> {
     // Copy the URL to the local file
     let cancel = CancellationToken::new();
     cloud_copy::copy(
-        config(),
+        config(true),
         Default::default(),
         "https://example.com",
         &*destination,
@@ -277,7 +272,7 @@ async fn copy_generic_url() -> Result<()> {
 #[tokio::test]
 async fn no_overwrite() -> Result<()> {
     let test = format!("{random}", random = Alphanumeric::new(10));
-    let mut config = config();
+    let config = config(true);
     let client = HttpClient::default();
     let cancel = CancellationToken::new();
 
@@ -300,7 +295,7 @@ async fn no_overwrite() -> Result<()> {
         .context("failed to upload file")?;
     }
 
-    config.overwrite = false;
+    let config = crate::config(false);
 
     // Attempt to overwrite the destination URLs
     for url in urls(&test) {
@@ -338,7 +333,7 @@ async fn no_overwrite() -> Result<()> {
         }
     }
 
-    config.overwrite = true;
+    let config = crate::config(true);
 
     // Overwrite the destination URLs
     for url in urls(&test) {
@@ -419,7 +414,7 @@ async fn roundtrip_directory() -> Result<()> {
         .await
         .context("failed to populate temporary directory")?;
 
-    let config = config();
+    let config = config(true);
     let client = HttpClient::default();
     let cancel = CancellationToken::new();
     for url in urls(&test) {
@@ -559,11 +554,10 @@ async fn link_to_cache() -> Result<()> {
 
     // Download the file again (it'll link from the cache)
     cloud_copy::copy(
-        Config {
-            overwrite: true,
-            link_to_cache: true,
-            ..Default::default()
-        },
+        Config::builder()
+            .with_overwrite(true)
+            .with_link_to_cache(true)
+            .build(),
         client,
         "https://example.com",
         &*destination,
@@ -592,7 +586,7 @@ async fn events() -> Result<()> {
 
     let test = format!("{random}", random = Alphanumeric::new(10));
 
-    let config = config();
+    let config = config(true);
     let client = HttpClient::default();
     let cancel = CancellationToken::new();
 
@@ -716,7 +710,7 @@ async fn walk() -> Result<()> {
 
     let test = format!("{random}", random = Alphanumeric::new(10));
 
-    let config = config();
+    let config = config(true);
     let client = HttpClient::default();
     let cancel = CancellationToken::new();
 

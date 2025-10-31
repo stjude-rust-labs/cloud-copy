@@ -109,7 +109,7 @@ impl StorageBackend for GenericStorageBackend {
 
     fn block_size(&self, _: u64) -> Result<u64> {
         // Return the block size if one was specified
-        if let Some(size) = self.config.block_size {
+        if let Some(size) = self.config.block_size() {
             return Ok(size);
         }
 

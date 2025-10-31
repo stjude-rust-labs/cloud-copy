@@ -1,7 +1,6 @@
 //! Implementation of the Google Cloud Storage backend.
 
 use std::borrow::Cow;
-use std::sync::Arc;
 
 use bytes::Bytes;
 use chrono::DateTime;
@@ -130,11 +129,11 @@ impl SignatureProvider for GoogleSignatureProvider<'_> {
     }
 
     fn access_key_id(&self) -> &str {
-        &self.auth.access_key
+        self.auth.access_key()
     }
 
     fn secret_access_key(&self) -> &str {
-        self.auth.secret.expose_secret()
+        self.auth.secret().expose_secret()
     }
 }
 
@@ -260,7 +259,7 @@ pub struct GoogleUploadPart {
 /// Represents an Google Cloud Storage file upload.
 pub struct GoogleUpload {
     /// The configuration to use for the upload.
-    config: Arc<Config>,
+    config: Config,
     /// The HTTP client to use for uploading.
     client: HttpClient,
     /// The URL of the object being uploaded.
@@ -315,7 +314,7 @@ impl Upload for GoogleUpload {
             .body(body)
             .build()?;
 
-        if let Some(auth) = &self.config.google.auth {
+        if let Some(auth) = self.config.google().auth() {
             append_authentication_header(auth, date, &mut request)?;
         }
 
@@ -379,7 +378,7 @@ impl Upload for GoogleUpload {
             .body(body)
             .build()?;
 
-        if let Some(auth) = &self.config.google.auth {
+        if let Some(auth) = self.config.google().auth() {
             append_authentication_header(auth, date, &mut request)?;
         }
 
@@ -395,7 +394,7 @@ impl Upload for GoogleUpload {
 /// Represents the Google Cloud Storage backend.
 pub struct GoogleStorageBackend {
     /// The config to use for transferring files.
-    config: Arc<Config>,
+    config: Config,
     /// The HTTP client to use for transferring files.
     client: HttpClient,
     /// The channel for sending transfer events.
@@ -410,7 +409,7 @@ impl GoogleStorageBackend {
         events: Option<broadcast::Sender<TransferEvent>>,
     ) -> Self {
         Self {
-            config: Arc::new(config),
+            config,
             client,
             events,
         }
@@ -437,7 +436,7 @@ impl StorageBackend for GoogleStorageBackend {
         const BLOCK_COUNT_INCREMENT: u64 = 50;
 
         // Return the block size if one was specified
-        if let Some(size) = self.config.block_size {
+        if let Some(size) = self.config.block_size() {
             if size > MAX_PART_SIZE {
                 return Err(GoogleError::InvalidBlockSize.into());
             }
@@ -562,7 +561,7 @@ impl StorageBackend for GoogleStorageBackend {
             .header(GOOGLE_CONTENT_SHA256_HEADER, sha256_hex_string([]))
             .build()?;
 
-        if let Some(auth) = &self.config.google.auth {
+        if let Some(auth) = self.config.google().auth() {
             append_authentication_header(auth, date, &mut request)?;
         }
 
@@ -600,7 +599,7 @@ impl StorageBackend for GoogleStorageBackend {
             .header(GOOGLE_CONTENT_SHA256_HEADER, sha256_hex_string([]))
             .build()?;
 
-        if let Some(auth) = &self.config.google.auth {
+        if let Some(auth) = self.config.google().auth() {
             append_authentication_header(auth, date, &mut request)?;
         }
 
@@ -639,7 +638,7 @@ impl StorageBackend for GoogleStorageBackend {
             .header(header::IF_MATCH, etag)
             .build()?;
 
-        if let Some(auth) = &self.config.google.auth {
+        if let Some(auth) = self.config.google().auth() {
             append_authentication_header(auth, date, &mut request)?;
         }
 
@@ -718,7 +717,7 @@ impl StorageBackend for GoogleStorageBackend {
                 .header(GOOGLE_CONTENT_SHA256_HEADER, sha256_hex_string([]))
                 .build()?;
 
-            if let Some(auth) = &self.config.google.auth {
+            if let Some(auth) = self.config.google().auth() {
                 append_authentication_header(auth, date, &mut request)?;
             }
 
@@ -772,7 +771,7 @@ impl StorageBackend for GoogleStorageBackend {
 
         // GCS doesn't support conditional requests for `CreateMultipartUpload`.
         // Therefore, we must issue a HEAD request for the object if not overwriting.
-        if !self.config.overwrite {
+        if !self.config.overwrite() {
             let response = self.head(url.clone(), false).await?;
             if response.status() != StatusCode::NOT_FOUND {
                 return Err(Error::RemoteDestinationExists(url));
@@ -797,7 +796,7 @@ impl StorageBackend for GoogleStorageBackend {
             .header(GOOGLE_CONTENT_SHA256_HEADER, sha256_hex_string([]))
             .build()?;
 
-        if let Some(auth) = &self.config.google.auth {
+        if let Some(auth) = self.config.google().auth() {
             append_authentication_header(auth, date, &mut request)?;
         }
 

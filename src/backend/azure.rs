@@ -350,7 +350,7 @@ impl StorageBackend for AzureBlobStorageBackend {
         const BLOCK_COUNT_INCREMENT: u64 = 50;
 
         // Return the block size if one was specified
-        if let Some(size) = self.config.block_size {
+        if let Some(size) = self.config.block_size() {
             if size > MAX_BLOCK_SIZE {
                 return Err(AzureError::InvalidBlockSize.into());
             }
@@ -393,7 +393,8 @@ impl StorageBackend for AzureBlobStorageBackend {
                 };
 
                 domain.eq_ignore_ascii_case(AZURE_BLOB_STORAGE_ROOT_DOMAIN)
-                    | (config.azure.use_azurite && domain.eq_ignore_ascii_case(AZURITE_ROOT_DOMAIN))
+                    | (config.azure().use_azurite()
+                        && domain.eq_ignore_ascii_case(AZURITE_ROOT_DOMAIN))
             }
             _ => false,
         }
@@ -408,7 +409,7 @@ impl StorageBackend for AzureBlobStorageBackend {
                     return Err(AzureError::InvalidScheme.into());
                 }
 
-                let (scheme, root, port) = if config.azure.use_azurite {
+                let (scheme, root, port) = if config.azure().use_azurite() {
                     ("http", AZURITE_ROOT_DOMAIN, ":10000")
                 } else {
                     ("https", AZURE_BLOB_STORAGE_ROOT_DOMAIN, "")
@@ -700,7 +701,7 @@ impl StorageBackend for AzureBlobStorageBackend {
         // Azure doesn't support conditional requests for `Put Block`.
         // Therefore, we must issue a HEAD request for the blob if not overwriting.
         // See: https://learn.microsoft.com/en-us/rest/api/storageservices/specifying-conditional-headers-for-blob-service-operations
-        if !self.config.overwrite {
+        if !self.config.overwrite() {
             let response = self.head(url.clone(), false).await?;
             if response.status() != StatusCode::NOT_FOUND {
                 return Err(Error::RemoteDestinationExists(url));

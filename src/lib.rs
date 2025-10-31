@@ -642,7 +642,7 @@ pub async fn copy(
 
     match (source, destination) {
         (Location::Path(source), Location::Path(destination)) => {
-            if !config.overwrite && destination.exists() {
+            if !config.overwrite() && destination.exists() {
                 return Err(Error::LocalDestinationExists(destination.to_path_buf()));
             }
 
@@ -675,7 +675,7 @@ pub async fn copy(
             }
         }
         (Location::Url(source), Location::Path(destination)) => {
-            if !config.overwrite && destination.exists() {
+            if !config.overwrite() && destination.exists() {
                 return Err(Error::LocalDestinationExists(destination.to_path_buf()));
             }
 
@@ -803,13 +803,9 @@ mod test {
             "https://foo.storage.googleapis.com/bar/baz"
         );
 
-        let config = Config {
-            s3: S3Config {
-                region: Some("my-region".into()),
-                ..Default::default()
-            },
-            ..Default::default()
-        };
+        let config = Config::builder()
+            .with_s3(S3Config::default().with_region("my-region"))
+            .build();
 
         assert_eq!(
             rewrite_url(&config, &"s3://foo/bar/baz".parse().unwrap())
@@ -818,14 +814,10 @@ mod test {
             "https://foo.s3.my-region.amazonaws.com/bar/baz"
         );
 
-        let config = Config {
-            azure: AzureConfig { use_azurite: true },
-            s3: S3Config {
-                use_localstack: true,
-                ..Default::default()
-            },
-            ..Default::default()
-        };
+        let config = Config::builder()
+            .with_azure(AzureConfig::default().with_use_azurite(true))
+            .with_s3(S3Config::default().with_use_localstack(true))
+            .build();
 
         assert_eq!(
             rewrite_url(&config, &"az://foo/bar/baz".parse().unwrap())
