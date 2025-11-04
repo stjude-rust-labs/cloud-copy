@@ -167,16 +167,19 @@ fn urls(test: &str) -> Vec<Url> {
             .unwrap(),
 
         // Azure URLs
-        // These URLs use a SAS token that expires in 2050 and the default credentials of Azurite
-        format!("az://devstoreaccount1/{TEST_BUCKET_NAME}/1/{test}?sv=2018-03-28&spr=https%2Chttp&st=2025-08-11T15%3A49%3A59Z&se=2050-08-11T15%3A49%3A00Z&sr=c&sp=rcwl&sig=0UK1EckCkj0k8Xi7s7yjB5QpjZa%2FVUmtd906SWAtO%2FM%3D").parse().unwrap(),
-        format!("http://devstoreaccount1.blob.core.windows.net.localhost:10000/{TEST_BUCKET_NAME}/2/{test}?sv=2018-03-28&spr=https%2Chttp&st=2025-08-11T15%3A49%3A59Z&se=2050-08-11T15%3A49%3A00Z&sr=c&sp=rcwl&sig=0UK1EckCkj0k8Xi7s7yjB5QpjZa%2FVUmtd906SWAtO%2FM%3D").parse().unwrap(),
+        format!("az://devstoreaccount1/{TEST_BUCKET_NAME}/1/{test}").parse().unwrap(),
+        format!("http://devstoreaccount1.blob.core.windows.net.localhost:10000/{TEST_BUCKET_NAME}/2/{test}").parse().unwrap(),
     ]
 }
 
 fn config(overwrite: bool) -> Config {
     Config::builder()
         .with_overwrite(overwrite)
-        .with_azure(AzureConfig::default().with_use_azurite(true))
+        .with_azure(AzureConfig::default().with_use_azurite(true).with_auth(
+            "devstoreaccount1",
+            "Eby8vdM02xNOcqFlqUwJPLlmEtlCDXJ1OUzFT50uSRZ6IFsuFq2UVErCz4I6tq/K1SZFPTOtr/\
+             KBHBeksoGMGw==",
+        ))
         .with_s3(
             S3Config::default()
                 .with_use_localstack(true)
@@ -513,11 +516,12 @@ async fn link_to_cache() -> Result<()> {
 
     let cancel = CancellationToken::new();
 
-    let client = HttpClient::new_with_cache(&cache_dir);
+    let config = Config::default();
+    let client = HttpClient::new_with_cache(config.clone(), &cache_dir);
 
     // Download the file (and cache it)
     cloud_copy::copy(
-        Default::default(),
+        config,
         client.clone(),
         "https://example.com",
         &*destination,
@@ -725,10 +729,7 @@ async fn walk() -> Result<()> {
     for url in urls(&test) {
         for i in 0..10 {
             let mut url = url.clone();
-            url.path_segments_mut()
-                .unwrap()
-                .push("")
-                .push(&i.to_string());
+            url.path_segments_mut().unwrap().push(&i.to_string());
 
             // Copy the local file to the cloud
             cloud_copy::copy(

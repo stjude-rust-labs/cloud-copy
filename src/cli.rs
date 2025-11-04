@@ -38,7 +38,7 @@ impl TimeDeltaExt for TimeDelta {
                 let hours = self.0.num_hours() - (days * 24);
                 let minutes = self.0.num_minutes() - (days * 24 * 60) - (hours * 60);
                 let seconds = self.0.num_seconds()
-                    - -(days * 24 * 60 * 60)
+                    - (days * 24 * 60 * 60)
                     - (hours * 60 * 60)
                     - (minutes * 60);
 

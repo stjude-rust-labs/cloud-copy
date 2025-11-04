@@ -16,15 +16,54 @@ const DEFAULT_RETRIES: usize = 5;
 /// The default S3 URL region.
 const DEFAULT_REGION: &str = "us-east-1";
 
+/// Represents authentication configuration for Azure Storage.
+#[derive(Debug, Clone, Deserialize, Default)]
+pub struct AzureAuthConfig {
+    /// The Azure Storage account name to use.
+    account_name: String,
+    /// The Azure Storage access key Key to use.
+    access_key: SecretString,
+}
+
+impl AzureAuthConfig {
+    /// Gets the Azure Storage Account Name to use for authentication.
+    pub fn account_name(&self) -> &str {
+        &self.account_name
+    }
+
+    /// Gets the Access Storage Access Key to use for authentication.
+    pub fn access_key(&self) -> &SecretString {
+        &self.access_key
+    }
+}
+
 /// Represents configuration for Azure Storage.
 #[derive(Debug, Clone, Default, Deserialize)]
 pub struct AzureConfig {
+    /// Stores the auth to use for Azure Storage.
+    ///
+    /// If `None`, no authentication header will be put on requests.
+    #[serde(default)]
+    auth: Option<AzureAuthConfig>,
     /// Stores whether or not Azurite is being used.
     #[serde(default)]
     use_azurite: bool,
 }
 
 impl AzureConfig {
+    /// Sets the auth to use for Azure Storage.
+    pub fn with_auth(
+        mut self,
+        account_name: impl Into<String>,
+        access_key: impl Into<SecretString>,
+    ) -> Self {
+        self.auth = Some(AzureAuthConfig {
+            account_name: account_name.into(),
+            access_key: access_key.into(),
+        });
+        self
+    }
+
     /// Sets whether or not [Azurite](https://learn.microsoft.com/en-us/azure/storage/common/storage-use-azurite) is being used.
     ///
     /// Requests for Azurite are expected to use host suffix
@@ -36,6 +75,13 @@ impl AzureConfig {
     pub fn with_use_azurite(mut self, use_azurite: bool) -> Self {
         self.use_azurite = use_azurite;
         self
+    }
+
+    /// Gets the Azure Storage authentication configuration.
+    ///
+    /// Returns `None` if requests are not using authentication.
+    pub fn auth(&self) -> Option<&AzureAuthConfig> {
+        self.auth.as_ref()
     }
 
     /// Gets whether or not [Azurite](https://learn.microsoft.com/en-us/azure/storage/common/storage-use-azurite) is being used.
@@ -54,10 +100,12 @@ pub struct S3AuthConfig {
 }
 
 impl S3AuthConfig {
+    /// Gets the AWS Access Key ID to use for authentication.
     pub fn access_key_id(&self) -> &str {
         &self.access_key_id
     }
 
+    /// Gets the AWS Secret Access Key to use for authentication.
     pub fn secret_access_key(&self) -> &SecretString {
         &self.secret_access_key
     }
@@ -131,6 +179,8 @@ impl S3Config {
     }
 
     /// Gets the S3 authentication configuration.
+    ///
+    /// Returns `None` if requests are not using authentication.
     pub fn auth(&self) -> Option<&S3AuthConfig> {
         self.auth.as_ref()
     }
@@ -151,10 +201,12 @@ pub struct GoogleAuthConfig {
 }
 
 impl GoogleAuthConfig {
+    /// Gets the HMAC Access Key to use for authentication.
     pub fn access_key(&self) -> &str {
         &self.access_key
     }
 
+    /// Gets the HMAC Secret to use for authentication.
     pub fn secret(&self) -> &SecretString {
         &self.secret
     }
@@ -184,6 +236,9 @@ impl GoogleConfig {
         self
     }
 
+    /// Gets the Google Cloud Storage authentication configuration.
+    ///
+    /// Returns `None` if requests are not using authentication.
     pub fn auth(&self) -> Option<&GoogleAuthConfig> {
         self.auth.as_ref()
     }

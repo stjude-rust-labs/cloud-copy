@@ -8,19 +8,25 @@ use base64::prelude::BASE64_STANDARD;
 use chrono::Utc;
 use crc64fast_nvme::Digest;
 use http_cache_stream_reqwest::Cache;
+use http_cache_stream_reqwest::semantics;
 use http_cache_stream_reqwest::storage::DefaultCacheStorage;
 use reqwest::Body;
+use reqwest::Request;
 use reqwest::Response;
 use reqwest::StatusCode;
 use reqwest::header;
+use reqwest::header::HeaderMap;
+use reqwest::header::HeaderValue;
 use serde::Deserialize;
 use serde::Serialize;
 use tokio::sync::broadcast;
 use tracing::debug;
 use url::Url;
 
+use crate::AzureAuthConfig;
 use crate::BLOCK_SIZE_THRESHOLD;
 use crate::Config;
+use crate::DateTimeExt;
 use crate::Error;
 use crate::HttpClient;
 use crate::ONE_MEBIBYTE;
@@ -30,6 +36,7 @@ use crate::USER_AGENT;
 use crate::UrlExt;
 use crate::backend::StorageBackend;
 use crate::backend::Upload;
+use crate::backend::auth::azure::RequestSigner;
 use crate::generator::Alphanumeric;
 use crate::streams::ByteStream;
 use crate::streams::TransferStream;
@@ -70,6 +77,61 @@ const AZURE_BLOB_TYPE: &str = "BlockBlob";
 /// The name of the root container.
 const AZURE_ROOT_CONTAINER: &str = "$root";
 
+/// Inserts the authentication header to the request.
+fn insert_authentication_header(auth: &AzureAuthConfig, request: &mut Request) -> Result<()> {
+    let signer = RequestSigner::new(auth);
+    let auth = signer.sign(request).ok_or(AzureError::InvalidAccessKey)?;
+    request.headers_mut().insert(
+        header::AUTHORIZATION,
+        HeaderValue::try_from(auth).expect("value should be valid"),
+    );
+    Ok(())
+}
+
+/// Implements a revalidation hook that is invoked when a cache entry is
+/// revalidated.
+///
+/// Used to recalculate the `Authorization` header signature based on changes to
+/// request headers.
+pub(crate) fn revalidation_hook(
+    config: &Config,
+    request: &dyn semantics::RequestLike,
+    headers: &mut HeaderMap,
+) -> Result<()> {
+    let uri = request.uri();
+    let Some(host) = uri.host() else {
+        return Ok(());
+    };
+
+    if !is_azure_domain(config, host) {
+        return Ok(());
+    }
+
+    if let Some(auth) = config.azure().auth() {
+        let signer = RequestSigner::new(auth);
+        let auth = signer
+            .sign_revalidation(request, headers)
+            .ok_or(AzureError::InvalidAccessKey)?;
+        headers.insert(
+            header::AUTHORIZATION,
+            HeaderValue::try_from(auth).expect("value should be valid"),
+        );
+    }
+
+    Ok(())
+}
+
+/// Determines if the given domain is for Azure Storage.
+fn is_azure_domain(config: &Config, domain: &str) -> bool {
+    // Virtual host style URL of the form https://<account>.blob.core.windows.net/<container>/<path>
+    let Some((_, domain)) = domain.split_once('.') else {
+        return false;
+    };
+
+    domain.eq_ignore_ascii_case(AZURE_BLOB_STORAGE_ROOT_DOMAIN)
+        | (config.azure().use_azurite() && domain.eq_ignore_ascii_case(AZURITE_ROOT_DOMAIN))
+}
+
 /// Represents an Azure-specific copy operation error.
 #[derive(Debug, thiserror::Error)]
 pub enum AzureError {
@@ -96,6 +158,9 @@ pub enum AzureError {
     /// The blob name is missing in the URL.
     #[error("a blob name is missing from the provided URL")]
     BlobNameMissing,
+    /// The Azure Storage access key is invalid.
+    #[error("invalid Azure Storage access key")]
+    InvalidAccessKey,
 }
 
 /// Represents information about a blob.
@@ -178,6 +243,8 @@ impl ResponseExt for Response {
 
 /// Represents an upload of a blob to Azure Blob Storage.
 pub struct AzureBlobUpload {
+    /// The configuration to use for the upload.
+    config: Config,
     /// The HTTP client to use for the upload.
     client: HttpClient,
     /// The blob URL.
@@ -191,12 +258,14 @@ pub struct AzureBlobUpload {
 impl AzureBlobUpload {
     /// Constructs a new blob upload.
     fn new(
+        config: Config,
         client: HttpClient,
         url: Url,
         block_id: Arc<String>,
         events: Option<broadcast::Sender<TransferEvent>>,
     ) -> Self {
         Self {
+            config,
             client,
             url,
             block_id,
@@ -247,20 +316,24 @@ impl Upload for AzureBlobUpload {
             self.events.clone(),
         ));
 
-        let response = self
+        let mut request = self
             .client
             .put(url)
             .header(header::USER_AGENT, USER_AGENT)
             .header(header::CONTENT_LENGTH, length)
             .header(header::CONTENT_TYPE, "application/octet-stream")
-            .header(header::DATE, Utc::now().to_rfc2822())
+            .header(header::DATE, Utc::now().to_http_date())
             .header(AZURE_VERSION_HEADER, AZURE_STORAGE_VERSION)
             .header(AZURE_BLOB_TYPE_HEADER, AZURE_BLOB_TYPE)
             .header(AZURE_CONTENT_CRC_HEADER, checksum)
             .body(body)
-            .send()
-            .await?;
+            .build()?;
 
+        if let Some(auth) = self.config.azure().auth() {
+            insert_authentication_header(auth, &mut request)?;
+        }
+
+        let response = self.client.execute(request).await?;
         if response.status() == StatusCode::CREATED {
             Ok(Some(block_id))
         } else {
@@ -283,18 +356,22 @@ impl Upload for AzureBlobUpload {
 
         let body = serde_xml_rs::to_string(&BlockList { latest: parts }).expect("should serialize");
 
-        let response = self
+        let mut request = self
             .client
             .put(url)
             .header(header::USER_AGENT, USER_AGENT)
             .header(header::CONTENT_LENGTH, body.len())
             .header(header::CONTENT_TYPE, "application/xml")
-            .header(header::DATE, Utc::now().to_rfc2822())
+            .header(header::DATE, Utc::now().to_http_date())
             .header(AZURE_VERSION_HEADER, AZURE_STORAGE_VERSION)
             .body(body)
-            .send()
-            .await?;
+            .build()?;
 
+        if let Some(auth) = self.config.azure().auth() {
+            insert_authentication_header(auth, &mut request)?;
+        }
+
+        let response = self.client.execute(request).await?;
         if response.status() == StatusCode::CREATED {
             Ok(())
         } else {
@@ -387,14 +464,7 @@ impl StorageBackend for AzureBlobStorageBackend {
                     return false;
                 };
 
-                // Virtual host style URL of the form https://<account>.blob.core.windows.net/<container>/<path>
-                let Some((_, domain)) = domain.split_once('.') else {
-                    return false;
-                };
-
-                domain.eq_ignore_ascii_case(AZURE_BLOB_STORAGE_ROOT_DOMAIN)
-                    | (config.azure().use_azurite()
-                        && domain.eq_ignore_ascii_case(AZURITE_ROOT_DOMAIN))
+                is_azure_domain(config, domain)
             }
             _ => false,
         }
@@ -476,15 +546,20 @@ impl StorageBackend for AzureBlobStorageBackend {
 
         debug!("sending HEAD request for `{url}`", url = url.display());
 
-        let response = self
+        let mut request = self
             .client
-            .head(url)
+            .get(url)
+            .header(header::ACCEPT, "application/xml")
             .header(header::USER_AGENT, USER_AGENT)
-            .header(header::DATE, Utc::now().to_rfc2822())
+            .header(header::DATE, Utc::now().to_http_date())
             .header(AZURE_VERSION_HEADER, AZURE_STORAGE_VERSION)
-            .send()
-            .await?;
+            .build()?;
 
+        if let Some(auth) = self.config.azure().auth() {
+            insert_authentication_header(auth, &mut request)?;
+        }
+
+        let response = self.client.execute(request).await?;
         if !response.status().is_success() {
             // If the resource isn't required to exist and it's a 404, return the response.
             if !must_exist && response.status() == StatusCode::NOT_FOUND {
@@ -506,15 +581,19 @@ impl StorageBackend for AzureBlobStorageBackend {
 
         debug!("sending GET request for `{url}`", url = url.display());
 
-        let response = self
+        let mut request = self
             .client
             .get(url)
             .header(header::USER_AGENT, USER_AGENT)
-            .header(header::DATE, Utc::now().to_rfc2822())
+            .header(header::DATE, Utc::now().to_http_date())
             .header(AZURE_VERSION_HEADER, AZURE_STORAGE_VERSION)
-            .send()
-            .await?;
+            .build()?;
 
+        if let Some(auth) = self.config.azure().auth() {
+            insert_authentication_header(auth, &mut request)?;
+        }
+
+        let response = self.client.execute(request).await?;
         if !response.status().is_success() {
             return Err(response.into_error().await);
         }
@@ -534,17 +613,21 @@ impl StorageBackend for AzureBlobStorageBackend {
             url = url.display(),
         );
 
-        let response = self
+        let mut request = self
             .client
             .get(url)
             .header(header::USER_AGENT, USER_AGENT)
-            .header(header::DATE, Utc::now().to_rfc2822())
+            .header(header::DATE, Utc::now().to_http_date())
             .header(header::RANGE, format!("bytes={offset}-"))
             .header(header::IF_MATCH, etag)
             .header(AZURE_VERSION_HEADER, AZURE_STORAGE_VERSION)
-            .send()
-            .await?;
+            .build()?;
 
+        if let Some(auth) = self.config.azure().auth() {
+            insert_authentication_header(auth, &mut request)?;
+        }
+
+        let response = self.client.execute(request).await?;
         let status = response.status();
 
         // Handle precondition failed as remote content modified
@@ -645,15 +728,19 @@ impl StorageBackend for AzureBlobStorageBackend {
             }
 
             // List the blobs with the prefix
-            let response = self
+            let mut request = self
                 .client
                 .get(url)
                 .header(header::USER_AGENT, USER_AGENT)
-                .header(header::DATE, Utc::now().to_rfc2822())
+                .header(header::DATE, Utc::now().to_http_date())
                 .header(AZURE_VERSION_HEADER, AZURE_STORAGE_VERSION)
-                .send()
-                .await?;
+                .build()?;
 
+            if let Some(auth) = self.config.azure().auth() {
+                insert_authentication_header(auth, &mut request)?;
+            }
+
+            let response = self.client.execute(request).await?;
             let status = response.status();
             if !status.is_success() {
                 return Err(response.into_error().await);
@@ -709,6 +796,7 @@ impl StorageBackend for AzureBlobStorageBackend {
         }
 
         Ok(AzureBlobUpload::new(
+            self.config.clone(),
             self.client.clone(),
             url,
             Arc::new(Alphanumeric::new(16).to_string()),

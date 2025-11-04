@@ -12,6 +12,7 @@ use chrono::Utc;
 use clap::Parser;
 use clap_verbosity_flag::Verbosity;
 use clap_verbosity_flag::WarnLevel;
+use cloud_copy::AzureConfig;
 use cloud_copy::Config;
 use cloud_copy::GoogleConfig;
 use cloud_copy::HttpClient;
@@ -65,6 +66,20 @@ struct Args {
     #[clap(long, value_name = "RETRIES")]
     retries: Option<usize>,
 
+    /// The Azure Storage Account Name to use.
+    #[clap(long, env, value_name = "NAME", requires = "azure_access_key")]
+    azure_account_name: Option<String>,
+
+    /// The Azure Storage Access Key to use.
+    #[clap(
+        long,
+        env,
+        hide_env_values(true),
+        value_name = "KEY",
+        requires = "azure_account_name"
+    )]
+    azure_access_key: Option<SecretString>,
+
     /// The AWS Access Key ID to use.
     #[clap(long, env, value_name = "ID", requires = "aws_secret_access_key")]
     aws_access_key_id: Option<String>,
@@ -106,6 +121,14 @@ impl Args {
     /// Converts the arguments into a `Config`, HTTP client, source, and
     /// destination.
     fn into_parts(self) -> (Config, HttpClient, String, String) {
+        let azure = if let (Some(account_name), Some(access_key)) =
+            (self.azure_account_name, self.azure_access_key)
+        {
+            AzureConfig::default().with_auth(account_name, access_key)
+        } else {
+            AzureConfig::default()
+        };
+
         let s3 =
             if let (Some(id), Some(key)) = (self.aws_access_key_id, self.aws_secret_access_key) {
                 S3Config::default().with_auth(id, key)
@@ -128,13 +151,14 @@ impl Args {
             .with_maybe_block_size(self.block_size)
             .with_maybe_parallelism(self.parallelism)
             .with_maybe_retries(self.retries)
+            .with_azure(azure)
             .with_s3(s3)
             .with_google(google)
             .build();
 
         let client = self
             .cache_dir
-            .map(HttpClient::new_with_cache)
+            .map(|dir| HttpClient::new_with_cache(config.clone(), dir))
             .unwrap_or_default();
 
         (config, client, self.source, self.destination)

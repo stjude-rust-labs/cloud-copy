@@ -16,6 +16,7 @@ use tracing::debug;
 use url::Url;
 
 use crate::Config;
+use crate::DateTimeExt;
 use crate::Error;
 use crate::HttpClient;
 use crate::Result;
@@ -143,7 +144,7 @@ impl StorageBackend for GenericStorageBackend {
             .client
             .head(url)
             .header(header::USER_AGENT, USER_AGENT)
-            .header(header::DATE, Utc::now().to_rfc2822())
+            .header(header::DATE, Utc::now().to_http_date())
             .send()
             .await?;
 
@@ -166,7 +167,7 @@ impl StorageBackend for GenericStorageBackend {
             .client
             .get(url)
             .header(header::USER_AGENT, USER_AGENT)
-            .header(header::DATE, Utc::now().to_rfc2822())
+            .header(header::DATE, Utc::now().to_http_date())
             .send()
             .await?;
 
@@ -187,7 +188,7 @@ impl StorageBackend for GenericStorageBackend {
             .client
             .get(url)
             .header(header::USER_AGENT, USER_AGENT)
-            .header(header::DATE, Utc::now().to_rfc2822())
+            .header(header::DATE, Utc::now().to_http_date())
             .header(header::RANGE, format!("bytes={offset}-"))
             .header(header::IF_MATCH, etag)
             .send()

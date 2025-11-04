@@ -32,9 +32,9 @@ use crate::USER_AGENT;
 use crate::UrlExt as _;
 use crate::backend::StorageBackend;
 use crate::backend::Upload;
-use crate::backend::auth::RequestSigner;
-use crate::backend::auth::SignatureProvider;
-use crate::backend::auth::sha256_hex_string;
+use crate::backend::auth::s3::RequestSigner;
+use crate::backend::auth::s3::SignatureProvider;
+use crate::sha256_hex_string;
 use crate::streams::ByteStream;
 use crate::streams::TransferStream;
 
@@ -172,8 +172,8 @@ impl SignatureProvider for S3SignatureProvider<'_> {
     }
 }
 
-/// Appends the authentication header to the request.
-fn append_authentication_header(
+/// Inserts the authentication header to the request.
+fn insert_authentication_header(
     auth: &S3AuthConfig,
     date: DateTime<Utc>,
     request: &mut Request,
@@ -185,7 +185,7 @@ fn append_authentication_header(
     let auth = signer
         .sign(date, request)
         .ok_or(S3Error::InvalidSecretAccessKey)?;
-    request.headers_mut().append(
+    request.headers_mut().insert(
         header::AUTHORIZATION,
         HeaderValue::try_from(auth).expect("value should be valid"),
     );
@@ -381,7 +381,7 @@ impl Upload for S3Upload {
             .build()?;
 
         if let Some(auth) = self.config.s3().auth() {
-            append_authentication_header(auth, date, &mut request)?;
+            insert_authentication_header(auth, date, &mut request)?;
         }
 
         let response = self.client.execute(request).await?;
@@ -443,7 +443,7 @@ impl Upload for S3Upload {
             .build()?;
 
         if let Some(auth) = self.config.s3().auth() {
-            append_authentication_header(auth, date, &mut request)?;
+            insert_authentication_header(auth, date, &mut request)?;
         }
 
         let response = self.client.execute(request).await?;
@@ -647,7 +647,7 @@ impl StorageBackend for S3StorageBackend {
             .build()?;
 
         if let Some(auth) = self.config.s3().auth() {
-            append_authentication_header(auth, date, &mut request)?;
+            insert_authentication_header(auth, date, &mut request)?;
         }
 
         let response = self.client.execute(request).await?;
@@ -682,7 +682,7 @@ impl StorageBackend for S3StorageBackend {
             .build()?;
 
         if let Some(auth) = self.config.s3().auth() {
-            append_authentication_header(auth, date, &mut request)?;
+            insert_authentication_header(auth, date, &mut request)?;
         }
 
         let response = self.client.execute(request).await?;
@@ -718,7 +718,7 @@ impl StorageBackend for S3StorageBackend {
             .build()?;
 
         if let Some(auth) = self.config.s3().auth() {
-            append_authentication_header(auth, date, &mut request)?;
+            insert_authentication_header(auth, date, &mut request)?;
         }
 
         let response = self.client.execute(request).await?;
@@ -799,7 +799,7 @@ impl StorageBackend for S3StorageBackend {
                 .build()?;
 
             if let Some(auth) = self.config.s3().auth() {
-                append_authentication_header(auth, date, &mut request)?;
+                insert_authentication_header(auth, date, &mut request)?;
             }
 
             let response = self.client.execute(request).await?;
@@ -875,7 +875,7 @@ impl StorageBackend for S3StorageBackend {
             .build()?;
 
         if let Some(auth) = self.config.s3().auth() {
-            append_authentication_header(auth, date, &mut request)?;
+            insert_authentication_header(auth, date, &mut request)?;
         }
 
         let response = self.client.execute(request).await?;
