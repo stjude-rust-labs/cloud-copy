@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## Unreleased
 
+#### Added
+
+* Added support for Azure Shared Key authentication ([#26](https://github.com/stjude-rust-labs/cloud-copy/pull/26)).
+
+#### Changed
+
+* `Config` now implements a builder pattern for setting configuration options ([#26](https://github.com/stjude-rust-labs/cloud-copy/pull/26)).
+
 ## 0.4.0 - 10-13-2025
 
 #### Added
