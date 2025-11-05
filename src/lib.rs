@@ -25,6 +25,8 @@ use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Duration;
 
+use base64::Engine;
+use base64::prelude::BASE64_STANDARD;
 use chrono::DateTime;
 use chrono::Datelike;
 use chrono::Timelike;
@@ -33,6 +35,7 @@ use http_cache_stream_reqwest::Cache;
 use http_cache_stream_reqwest::storage::DefaultCacheStorage;
 use reqwest::Client;
 use reqwest::StatusCode;
+use reqwest::header;
 use reqwest_middleware::ClientBuilder;
 use reqwest_middleware::ClientWithMiddleware;
 use sha2::Digest;
@@ -50,9 +53,12 @@ use tracing::warn;
 use url::Url;
 
 use crate::backend::StorageBackend;
+use crate::backend::azure::AZURE_CONTENT_DIGEST_HEADER;
 use crate::backend::azure::AzureBlobStorageBackend;
 use crate::backend::generic::GenericStorageBackend;
+use crate::backend::google::GOOGLE_CONTENT_DIGEST_HEADER;
 use crate::backend::google::GoogleStorageBackend;
+use crate::backend::s3::AWS_CONTENT_DIGEST_HEADER;
 use crate::backend::s3::S3StorageBackend;
 use crate::streams::TransferStream;
 use crate::transfer::FileTransfer;
@@ -456,6 +462,9 @@ pub enum Error {
          offset"
     )]
     UnexpectedContentRangeStart,
+    /// Server responded with an invalid `Content-Digest` header.
+    #[error("invalid content digest `{0}`")]
+    InvalidContentDigest(String),
     /// An Azure error occurred.
     #[error(transparent)]
     Azure(#[from] AzureError),
@@ -828,6 +837,121 @@ pub async fn walk(config: Config, client: HttpClient, mut url: Url) -> Result<Ve
     } else {
         Err(Error::UnsupportedUrl(url))
     }
+}
+
+/// Represents the content digest of a resource.
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub enum ContentDigest {
+    /// The digest was produced from a hash algorithm specified via a
+    /// [`Content-Digest`][content-digest] header.
+    ///
+    /// [content-digest]: https://developer.mozilla.org/en-US/docs/Web/HTTP/Reference/Headers/Content-Digest
+    Hash {
+        /// The hash algorithm that produced the digest.
+        algorithm: String,
+        /// The bytes of the digest.
+        digest: Vec<u8>,
+    },
+    /// The digest is from a `ETag` header.
+    ///
+    /// The `ETag` is always a strong validator.
+    ETag(String),
+}
+
+impl ContentDigest {
+    /// Parses a [`Content-Digest`][content-digest] header value.
+    ///
+    /// Returns `None` if the header value is not valid.
+    ///
+    /// [content-digest]: https://developer.mozilla.org/en-US/docs/Web/HTTP/Reference/Headers/Content-Digest
+    pub fn parse_header(value: &str) -> Result<Self> {
+        fn parse(value: &str) -> Option<(String, Vec<u8>)> {
+            let (algorithm, digest) = value.split_once('=')?;
+            let digest = digest.strip_prefix(':')?.strip_suffix(':')?;
+            Some((algorithm.to_string(), BASE64_STANDARD.decode(digest).ok()?))
+        }
+
+        let (algorithm, digest) =
+            parse(value).ok_or_else(|| Error::InvalidContentDigest(value.to_string()))?;
+        Ok(Self::Hash { algorithm, digest })
+    }
+}
+
+/// Retrieves the known content digest of the given URL.
+///
+/// A `HEAD` request is made for the URL and the response headers are checked:
+///
+/// * If a [`Content-Digest`][content-digest] header is present, the value is
+///   returned as [`ContentDigest::Hash`].
+/// * If the resource is a supported cloud storage object and the object has a
+///   content digest metadata header, the value is returned as
+///   [`ContentDigest::Hash`].
+/// * If the response contains a strong `ETag` header, the value is returned as
+///   [`ContentDigest::ETag`].
+///
+/// Returns `Ok(None)` If the resource does not have a known content digest.
+///
+/// [content-digest]: https://developer.mozilla.org/en-US/docs/Web/HTTP/Reference/Headers/Content-Digest
+pub async fn get_content_digest(
+    config: Config,
+    client: HttpClient,
+    url: Url,
+) -> Result<Option<ContentDigest>> {
+    // Issue the `HEAD` request
+    let (response, metadata) = if AzureBlobStorageBackend::is_supported_url(&config, &url) {
+        let url = AzureBlobStorageBackend::rewrite_url(&config, &url)?;
+        (
+            AzureBlobStorageBackend::new(config, client, None)
+                .head(url.into_owned(), true)
+                .await?,
+            Some(AZURE_CONTENT_DIGEST_HEADER),
+        )
+    } else if S3StorageBackend::is_supported_url(&config, &url) {
+        let url = S3StorageBackend::rewrite_url(&config, &url)?;
+        (
+            S3StorageBackend::new(config, client, None)
+                .head(url.into_owned(), true)
+                .await?,
+            Some(AWS_CONTENT_DIGEST_HEADER),
+        )
+    } else if GoogleStorageBackend::is_supported_url(&config, &url) {
+        let url = GoogleStorageBackend::rewrite_url(&config, &url)?;
+        (
+            GoogleStorageBackend::new(config, client, None)
+                .head(url.into_owned(), true)
+                .await?,
+            Some(GOOGLE_CONTENT_DIGEST_HEADER),
+        )
+    } else {
+        (
+            GenericStorageBackend::new(config, client, None)
+                .head(url, true)
+                .await?,
+            None,
+        )
+    };
+
+    // Check for `Content-Digest` header first
+    let headers = response.headers();
+    if let Some(value) = headers.get("content-digest").and_then(|v| v.to_str().ok()) {
+        return Ok(Some(ContentDigest::parse_header(value)?));
+    }
+
+    // Check for the backend metadata header next
+    if let Some(metadata) = metadata
+        && let Some(value) = headers.get(metadata).and_then(|v| v.to_str().ok())
+    {
+        return Ok(Some(ContentDigest::parse_header(value)?));
+    }
+
+    // Finally, check for a strong `ETag` header
+    if let Some(value) = headers.get(header::ETAG).and_then(|v| v.to_str().ok())
+        && !value.starts_with("W/")
+    {
+        return Ok(Some(ContentDigest::ETag(value.to_string())));
+    }
+
+    Ok(None)
 }
 
 #[cfg(test)]

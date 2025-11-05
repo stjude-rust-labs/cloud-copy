@@ -60,7 +60,14 @@ const MAX_FILE_SIZE: u64 = MAX_PART_SIZE * 1024;
 const GOOGLE_DATE_HEADER: &str = "x-goog-date";
 
 /// The Google content SHA256 header name.
+///
+/// This is the SHA256 of each upload part for multipart uploads.
 const GOOGLE_CONTENT_SHA256_HEADER: &str = "x-goog-content-sha256";
+
+/// The Google content digest header name.
+///
+/// This is the content digest for the entire object.
+pub(crate) const GOOGLE_CONTENT_DIGEST_HEADER: &str = "x-goog-meta-content-digest";
 
 /// Represents a Google-specific copy operation error.
 #[derive(Debug, thiserror::Error)]
@@ -760,7 +767,7 @@ impl StorageBackend for GoogleStorageBackend {
         Ok(paths)
     }
 
-    async fn new_upload(&self, url: Url) -> Result<Self::Upload> {
+    async fn new_upload(&self, digest: Option<String>, url: Url) -> Result<Self::Upload> {
         // See: https://cloud.google.com/storage/docs/xml-api/post-object-multipart
 
         debug_assert!(
@@ -795,6 +802,15 @@ impl StorageBackend for GoogleStorageBackend {
             )
             .header(GOOGLE_CONTENT_SHA256_HEADER, sha256_hex_string([]))
             .build()?;
+
+        if let Some(digest) = digest {
+            request.headers_mut().insert(
+                GOOGLE_CONTENT_DIGEST_HEADER,
+                digest
+                    .try_into()
+                    .expect("invalid content digest header value"),
+            );
+        }
 
         if let Some(auth) = self.config.google().auth() {
             insert_authentication_header(auth, date, &mut request)?;

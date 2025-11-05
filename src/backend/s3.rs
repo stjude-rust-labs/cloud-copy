@@ -61,7 +61,14 @@ const MAX_FILE_SIZE: u64 = MAX_PART_SIZE * 1024;
 const AWS_DATE_HEADER: &str = "x-amz-date";
 
 /// The AWS content SHA256 header name.
+///
+/// This is the SHA256 of each upload part for multipart uploads.
 const AWS_CONTENT_SHA256_HEADER: &str = "x-amz-content-sha256";
+
+/// The AWS content digest header name.
+///
+/// This is the content digest for the entire object.
+pub(crate) const AWS_CONTENT_DIGEST_HEADER: &str = "x-amz-meta-content-digest";
 
 /// Represents a S3-specific copy operation error.
 #[derive(Debug, thiserror::Error)]
@@ -841,7 +848,7 @@ impl StorageBackend for S3StorageBackend {
         Ok(paths)
     }
 
-    async fn new_upload(&self, url: Url) -> Result<Self::Upload> {
+    async fn new_upload(&self, digest: Option<String>, url: Url) -> Result<Self::Upload> {
         // See: https://docs.aws.amazon.com/AmazonS3/latest/API/API_CreateMultipartUpload.html
 
         debug_assert!(
@@ -873,6 +880,15 @@ impl StorageBackend for S3StorageBackend {
             .header(AWS_DATE_HEADER, date.format("%Y%m%dT%H%M%SZ").to_string())
             .header(AWS_CONTENT_SHA256_HEADER, sha256_hex_string([]))
             .build()?;
+
+        if let Some(digest) = digest {
+            request.headers_mut().insert(
+                AWS_CONTENT_DIGEST_HEADER,
+                digest
+                    .try_into()
+                    .expect("invalid content digest header value"),
+            );
+        }
 
         if let Some(auth) = self.config.s3().auth() {
             insert_authentication_header(auth, date, &mut request)?;

@@ -1,12 +1,21 @@
 //! Implementation of cloud configuration.
 
+use std::fmt;
+use std::fs::File;
+use std::io::BufReader;
 use std::num::NonZero;
+use std::path::Path;
+use std::str::FromStr;
 use std::sync::Arc;
 use std::thread::available_parallelism;
 use std::time::Duration;
 
+use base64::Engine;
+use base64::prelude::BASE64_STANDARD;
 use secrecy::SecretString;
 use serde::Deserialize;
+use sha2::Digest;
+use tokio::task::spawn_blocking;
 use tokio_retry2::strategy::ExponentialFactorBackoff;
 use tokio_retry2::strategy::MaxInterval;
 
@@ -15,6 +24,83 @@ const DEFAULT_RETRIES: usize = 5;
 
 /// The default S3 URL region.
 const DEFAULT_REGION: &str = "us-east-1";
+
+/// Represents the supported hash algorithms for calculating content digests for
+/// uploads.
+#[derive(Default, Debug, Copy, Clone, PartialEq, Eq, Hash, Deserialize)]
+#[serde(rename_all = "snake_case")]
+#[cfg_attr(feature = "cli", derive(clap::ValueEnum))]
+pub enum HashAlgorithm {
+    /// Do not calculate content digests for uploads.
+    None,
+    /// Calculate content digests with SHA-256.
+    #[default]
+    Sha256,
+    /// Calculate content digests with Blake3.
+    Blake3,
+}
+
+impl HashAlgorithm {
+    /// Calculates a `Content-Digest` header value for the contents of the file
+    /// at the given path.
+    pub async fn calculate_content_digest(&self, path: &Path) -> crate::Result<Option<String>> {
+        match self {
+            Self::None => Ok(None),
+            Self::Sha256 => {
+                let path = path.to_path_buf();
+                spawn_blocking(move || {
+                    let mut hasher = sha2::Sha256::new();
+                    let mut reader = BufReader::new(File::open(path)?);
+                    std::io::copy(&mut reader, &mut hasher)?;
+                    let digest = hasher.finalize();
+                    Ok(Some(format!(
+                        "sha-256=:{encoded}:",
+                        encoded = BASE64_STANDARD.encode(digest)
+                    )))
+                })
+                .await
+                .expect("failed to join task")
+            }
+            Self::Blake3 => {
+                let path = path.to_path_buf();
+                spawn_blocking(move || {
+                    let mut hasher = blake3::Hasher::new();
+                    hasher.update_mmap_rayon(&path)?;
+                    let digest = hasher.finalize();
+                    Ok(Some(format!(
+                        "blake3=:{encoded}:",
+                        encoded = BASE64_STANDARD.encode(digest.as_bytes())
+                    )))
+                })
+                .await
+                .expect("failed to join task")
+            }
+        }
+    }
+}
+
+impl FromStr for HashAlgorithm {
+    type Err = String;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s {
+            "none" => Ok(Self::None),
+            "sha256" => Ok(Self::Sha256),
+            "blake3" => Ok(Self::Blake3),
+            _ => Err(format!("invalid digest algorithm `{s}`")),
+        }
+    }
+}
+
+impl fmt::Display for HashAlgorithm {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::None => write!(f, "none"),
+            Self::Sha256 => write!(f, "sha256"),
+            Self::Blake3 => write!(f, "blake3"),
+        }
+    }
+}
 
 /// Represents authentication configuration for Azure Storage.
 #[derive(Debug, Clone, Deserialize, Default)]
@@ -247,6 +333,9 @@ impl GoogleConfig {
 /// Stores the inner configuration for [`Config`].
 #[derive(Debug, Default, Deserialize)]
 struct ConfigInner {
+    /// The hash algorithm to use for calculating content digests.
+    #[serde(default)]
+    algorithm: HashAlgorithm,
     /// Stores whether or not we're linking to cache entries.
     #[serde(default)]
     link_to_cache: bool,
@@ -278,6 +367,13 @@ struct ConfigInner {
 pub struct ConfigBuilder(ConfigInner);
 
 impl ConfigBuilder {
+    /// Sets the hash algorithm to use for calculating content digests of
+    /// uploads.
+    pub fn with_hash_algorithm(mut self, algorithm: HashAlgorithm) -> Self {
+        self.0.algorithm = algorithm;
+        self
+    }
+
     /// Sets whether or not cache entries should be linked.
     ///
     /// If `link_to_cache` is `true`, then a downloaded file that is already
@@ -414,6 +510,11 @@ impl Config {
     /// Gets a [`ConfigBuilder`] for building a new [`Config`].
     pub fn builder() -> ConfigBuilder {
         ConfigBuilder::default()
+    }
+
+    /// Gets the hash algorithm used for calculating content digests of uploads.
+    pub fn hash_algorithm(&self) -> HashAlgorithm {
+        self.0.algorithm
     }
 
     /// Gets whether or not cache entries should be linked.
