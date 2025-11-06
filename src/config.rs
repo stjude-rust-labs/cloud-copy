@@ -21,7 +21,7 @@ const DEFAULT_REGION: &str = "us-east-1";
 pub struct AzureAuthConfig {
     /// The Azure Storage account name to use.
     account_name: String,
-    /// The Azure Storage access key Key to use.
+    /// The Azure Storage access key to use.
     access_key: SecretString,
 }
 
