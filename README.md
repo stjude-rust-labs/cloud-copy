@@ -51,7 +51,7 @@ Supported remote URLs for [Azure Blob Storage](https://azure.microsoft.com/en-us
 * `https` schemed URLs in the format `https://<account>.blob.core.windows.net/<container>/<blob>`.
 
 If authentication is required, the following environment variables may be set
-when invoking `cloud-copy:
+when invoking `cloud-copy`:
 
 * `AZURE_ACCOUNT_NAME` - the Azure Storage account name to use for
   authentication.
