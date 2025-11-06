@@ -832,8 +832,9 @@ dependencies = [
 
 [[package]]
 name = "http-cache-stream"
-version = "0.2.0"
-source = "git+https://github.com/stjude-rust-labs/http-cache-stream?branch=main#e147a567e67421b27b0f8f42f5670a342c7b9dec"
+version = "0.3.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "63b6f61e55d75019805646fba61a0d42edc257dcfe16783b84f6ceebfab57f22"
 dependencies = [
  "anyhow",
  "bincode",
@@ -844,6 +845,7 @@ dependencies = [
  "hex",
  "http",
  "http-body",
+ "http-body-util",
  "http-cache-semantics",
  "http-serde",
  "httpdate",
@@ -855,19 +857,19 @@ dependencies = [
  "tokio",
  "tokio-util",
  "tracing",
- "windows-sys 0.60.2",
 ]
 
 [[package]]
 name = "http-cache-stream-reqwest"
-version = "0.2.0"
-source = "git+https://github.com/stjude-rust-labs/http-cache-stream?branch=main#e147a567e67421b27b0f8f42f5670a342c7b9dec"
+version = "0.3.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "099b3c8a9899f382f0dbc858293ad1be5e651c17be2b21d9fc2cdefda6b909ce"
 dependencies = [
  "anyhow",
  "bytes",
  "futures",
+ "http-body-util",
  "http-cache-stream",
- "pin-project-lite",
  "reqwest",
  "reqwest-middleware",
 ]
