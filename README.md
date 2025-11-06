@@ -55,7 +55,7 @@ when invoking `cloud-copy`:
 
 * `AZURE_ACCOUNT_NAME` - the Azure Storage account name to use for
   authentication.
-* `AZURE_STORAGE_KEY` - the Azure Storage account key to use for authentication.
+* `AZURE_ACCESS_KEY` - the Azure Storage account key to use for authentication.
 
 #### AWS S3
 
