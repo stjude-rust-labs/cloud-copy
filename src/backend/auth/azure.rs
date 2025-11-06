@@ -31,7 +31,7 @@ type Hmac = hmac::Hmac<Sha256>;
 ///
 /// The signer implements Azure Shared Key authentication.
 ///
-/// See: https://learn.microsoft.com/en-us/rest/api/storageservices/authorize-with-shared-key
+/// See: <https://learn.microsoft.com/en-us/rest/api/storageservices/authorize-with-shared-key>
 pub struct RequestSigner<'a>(&'a AzureAuthConfig);
 
 impl<'a> RequestSigner<'a> {
@@ -105,7 +105,7 @@ impl<'a> RequestSigner<'a> {
 
     /// Formats a string to sign for authentication.
     ///
-    /// See: https://learn.microsoft.com/en-us/rest/api/storageservices/authorize-with-shared-key#constructing-the-signature-string
+    /// See: <https://learn.microsoft.com/en-us/rest/api/storageservices/authorize-with-shared-key#constructing-the-signature-string>
     ///
     /// # Panics
     ///
@@ -170,7 +170,7 @@ impl<'a> RequestSigner<'a> {
 
     /// Formats a canonical header string given the Microsoft extension headers.
     ///
-    /// See: https://learn.microsoft.com/en-us/rest/api/storageservices/authorize-with-shared-key#constructing-the-canonicalized-headers-string
+    /// See: <https://learn.microsoft.com/en-us/rest/api/storageservices/authorize-with-shared-key#constructing-the-canonicalized-headers-string>
     ///
     /// # Panics
     ///

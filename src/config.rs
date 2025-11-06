@@ -31,7 +31,7 @@ impl AzureAuthConfig {
         &self.account_name
     }
 
-    /// Gets the Access Storage Access Key to use for authentication.
+    /// Gets the Azure Storage access key to use for authentication.
     pub fn access_key(&self) -> &SecretString {
         &self.access_key
     }

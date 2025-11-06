@@ -53,7 +53,7 @@ Supported remote URLs for [Azure Blob Storage](https://azure.microsoft.com/en-us
 If authentication is required, the following environment variables may be set
 when invoking `cloud-copy:
 
-* `AZURE_STORAGE_ACCOUNT` - the Azure Storage account name to use for
+* `AZURE_ACCOUNT_NAME` - the Azure Storage account name to use for
   authentication.
 * `AZURE_STORAGE_KEY` - the Azure Storage account key to use for authentication.
 
