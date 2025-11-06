@@ -109,7 +109,7 @@ fn sha256_hex_string(bytes: impl AsRef<[u8]>) -> String {
 trait DateTimeExt {
     /// Converts a [`DateTime`] to a HTTP date string.
     ///
-    /// See: https://developer.mozilla.org/en-US/docs/Web/HTTP/Reference/Headers/Date
+    /// See: <https://developer.mozilla.org/en-US/docs/Web/HTTP/Reference/Headers/Date>
     fn to_http_date(&self) -> String;
 }
 
