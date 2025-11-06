@@ -241,7 +241,7 @@ impl<'a> RequestSigner<'a> {
 
     /// Signs the given string to format an `Authorization` header.
     ///
-    /// See: https://learn.microsoft.com/en-us/rest/api/storageservices/authorize-with-shared-key#specifying-the-authorization-header
+    /// See: <https://learn.microsoft.com/en-us/rest/api/storageservices/authorize-with-shared-key#specifying-the-authorization-header>
     ///
     /// Returns the value of the authorization header.
     ///
