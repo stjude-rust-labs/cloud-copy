@@ -214,7 +214,7 @@ impl StorageBackend for GenericStorageBackend {
         Ok(Vec::default())
     }
 
-    async fn new_upload(&self, _: Option<String>, _: Url) -> Result<Self::Upload> {
+    async fn new_upload(&self, _: Url, _: Option<String>) -> Result<Self::Upload> {
         panic!("generic storage backend cannot be used for uploading");
     }
 }

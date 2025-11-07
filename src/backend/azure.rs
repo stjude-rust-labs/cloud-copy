@@ -799,7 +799,7 @@ impl StorageBackend for AzureBlobStorageBackend {
         Ok(paths)
     }
 
-    async fn new_upload(&self, digest: Option<String>, url: Url) -> Result<Self::Upload> {
+    async fn new_upload(&self, url: Url, digest: Option<String>) -> Result<Self::Upload> {
         debug_assert!(
             Self::is_supported_url(&self.config, &url),
             "{url} is not a supported Azure URL",

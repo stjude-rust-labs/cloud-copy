@@ -767,7 +767,7 @@ impl StorageBackend for GoogleStorageBackend {
         Ok(paths)
     }
 
-    async fn new_upload(&self, digest: Option<String>, url: Url) -> Result<Self::Upload> {
+    async fn new_upload(&self, url: Url, digest: Option<String>) -> Result<Self::Upload> {
         // See: https://cloud.google.com/storage/docs/xml-api/post-object-multipart
 
         debug_assert!(

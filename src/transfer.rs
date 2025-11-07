@@ -653,7 +653,7 @@ where
                     select! {
                         biased;
                         _ = self.cancel.cancelled() => Err(Error::Canceled),
-                        r =  self.inner.backend.new_upload(digest.clone(), destination.clone()) => r,
+                        r =  self.inner.backend.new_upload(destination.clone(), digest.clone()) => r,
                     }
                     .map_err(Error::into_retry_error)
                 },

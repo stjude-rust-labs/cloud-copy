@@ -117,7 +117,7 @@ pub trait StorageBackend {
     /// See: <https://developer.mozilla.org/en-US/docs/Web/HTTP/Reference/Headers/Content-Digest>
     fn new_upload(
         &self,
-        digest: Option<String>,
         url: Url,
+        digest: Option<String>,
     ) -> impl Future<Output = Result<Self::Upload>> + Send;
 }

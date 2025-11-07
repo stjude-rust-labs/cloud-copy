@@ -848,7 +848,7 @@ impl StorageBackend for S3StorageBackend {
         Ok(paths)
     }
 
-    async fn new_upload(&self, digest: Option<String>, url: Url) -> Result<Self::Upload> {
+    async fn new_upload(&self, url: Url, digest: Option<String>) -> Result<Self::Upload> {
         // See: https://docs.aws.amazon.com/AmazonS3/latest/API/API_CreateMultipartUpload.html
 
         debug_assert!(
