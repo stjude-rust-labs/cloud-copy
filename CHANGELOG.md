@@ -9,6 +9,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 #### Added
 
+* Added `get_content_digest` function for retrieving content digests ([#27](https://github.com/stjude-rust-labs/cloud-copy/pull/27)).
+* Added content digest metadata for uploads, defaulting to SHA-256 ([#27](https://github.com/stjude-rust-labs/cloud-copy/pull/27)).
+* Added `--hash-algorithm` to `cloud-copy` CLI for specifying the algorithm to
+  use for attaching content digest metadata to uploaded objects ([#27](https://github.com/stjude-rust-labs/cloud-copy/pull/27)).
 * Added support for Azure Shared Key authentication ([#26](https://github.com/stjude-rust-labs/cloud-copy/pull/26)).
 
 #### Changed
