@@ -14,11 +14,9 @@ use clap_verbosity_flag::Verbosity;
 use clap_verbosity_flag::WarnLevel;
 use cloud_copy::AzureConfig;
 use cloud_copy::Config;
-use cloud_copy::GoogleAuthConfig;
 use cloud_copy::GoogleConfig;
 use cloud_copy::HttpClient;
 use cloud_copy::Location;
-use cloud_copy::S3AuthConfig;
 use cloud_copy::S3Config;
 use cloud_copy::cli::TimeDeltaExt;
 use cloud_copy::cli::handle_events;
@@ -68,6 +66,20 @@ struct Args {
     #[clap(long, value_name = "RETRIES")]
     retries: Option<usize>,
 
+    /// The Azure Storage Account Name to use.
+    #[clap(long, env, value_name = "NAME", requires = "azure_access_key")]
+    azure_account_name: Option<String>,
+
+    /// The Azure Storage Access Key to use.
+    #[clap(
+        long,
+        env,
+        hide_env_values(true),
+        value_name = "KEY",
+        requires = "azure_account_name"
+    )]
+    azure_access_key: Option<SecretString>,
+
     /// The AWS Access Key ID to use.
     #[clap(long, env, value_name = "ID", requires = "aws_secret_access_key")]
     aws_access_key_id: Option<String>,
@@ -109,42 +121,44 @@ impl Args {
     /// Converts the arguments into a `Config`, HTTP client, source, and
     /// destination.
     fn into_parts(self) -> (Config, HttpClient, String, String) {
-        let s3_auth =
-            if let (Some(id), Some(key)) = (self.aws_access_key_id, self.aws_secret_access_key) {
-                Some(S3AuthConfig {
-                    access_key_id: id,
-                    secret_access_key: key,
-                })
-            } else {
-                None
-            };
+        let azure = if let (Some(account_name), Some(access_key)) =
+            (self.azure_account_name, self.azure_access_key)
+        {
+            AzureConfig::default().with_auth(account_name, access_key)
+        } else {
+            AzureConfig::default()
+        };
 
-        let google_auth = if let (Some(access_key), Some(secret)) =
+        let s3 =
+            if let (Some(id), Some(key)) = (self.aws_access_key_id, self.aws_secret_access_key) {
+                S3Config::default().with_auth(id, key)
+            } else {
+                S3Config::default()
+            }
+            .with_maybe_region(self.aws_default_region);
+
+        let google = if let (Some(access_key), Some(secret)) =
             (self.google_hmac_access_key, self.google_hmac_secret)
         {
-            Some(GoogleAuthConfig { access_key, secret })
+            GoogleConfig::default().with_auth(access_key, secret)
         } else {
-            None
+            GoogleConfig::default()
         };
 
-        let config = Config {
-            link_to_cache: self.link_to_cache,
-            overwrite: self.overwrite,
-            block_size: self.block_size,
-            parallelism: self.parallelism,
-            retries: self.retries,
-            azure: AzureConfig { use_azurite: false },
-            s3: S3Config {
-                use_localstack: false,
-                region: self.aws_default_region,
-                auth: s3_auth,
-            },
-            google: GoogleConfig { auth: google_auth },
-        };
+        let config = Config::builder()
+            .with_link_to_cache(self.link_to_cache)
+            .with_overwrite(self.overwrite)
+            .with_maybe_block_size(self.block_size)
+            .with_maybe_parallelism(self.parallelism)
+            .with_maybe_retries(self.retries)
+            .with_azure(azure)
+            .with_s3(s3)
+            .with_google(google)
+            .build();
 
         let client = self
             .cache_dir
-            .map(HttpClient::new_with_cache)
+            .map(|dir| HttpClient::new_with_cache(config.clone(), dir))
             .unwrap_or_default();
 
         (config, client, self.source, self.destination)

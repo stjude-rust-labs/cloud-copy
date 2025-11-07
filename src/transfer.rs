@@ -220,7 +220,7 @@ where
                         let response = self.backend.get(source.clone()).await?;
 
                         // Check to see if we should link to the cache location
-                        if self.backend.config().link_to_cache
+                        if self.backend.config().link_to_cache()
                             && let Some(digest) = response
                                 .headers()
                                 .get(X_CACHE_DIGEST)

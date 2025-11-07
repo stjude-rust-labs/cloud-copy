@@ -50,8 +50,12 @@ Supported remote URLs for [Azure Blob Storage](https://azure.microsoft.com/en-us
 * `az` schemed URLs in the format `az://<account>/<container>/<blob>`.
 * `https` schemed URLs in the format `https://<account>.blob.core.windows.net/<container>/<blob>`.
 
-If authentication is required, the URL is expected to contain a SAS token in
-its query parameters.
+If authentication is required, the following environment variables may be set
+when invoking `cloud-copy`:
+
+* `AZURE_ACCOUNT_NAME` - the Azure Storage account name to use for
+  authentication.
+* `AZURE_ACCESS_KEY` - the Azure Storage account key to use for authentication.
 
 #### AWS S3
 

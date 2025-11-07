@@ -25,12 +25,18 @@ use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Duration;
 
+use chrono::DateTime;
+use chrono::Datelike;
+use chrono::Timelike;
+use chrono::Utc;
 use http_cache_stream_reqwest::Cache;
 use http_cache_stream_reqwest::storage::DefaultCacheStorage;
 use reqwest::Client;
 use reqwest::StatusCode;
 use reqwest_middleware::ClientBuilder;
 use reqwest_middleware::ClientWithMiddleware;
+use sha2::Digest;
+use sha2::Sha256;
 use tokio::fs::OpenOptions;
 use tokio::io::BufReader;
 use tokio::io::BufWriter;
@@ -90,6 +96,50 @@ fn notify_retry(e: &Error, duration: Duration) {
             "network operation failed (retried after waiting {secs} second{s}): {e}",
             s = if secs == 1 { "" } else { "s" }
         );
+    }
+}
+
+/// Creates a SHA-256 digest of the given bytes encoded as a hex string.
+fn sha256_hex_string(bytes: impl AsRef<[u8]>) -> String {
+    let mut hash = Sha256::new();
+    hash.update(bytes);
+    hex::encode(hash.finalize())
+}
+
+trait DateTimeExt {
+    /// Converts a [`DateTime`] to a HTTP date string.
+    ///
+    /// See: <https://developer.mozilla.org/en-US/docs/Web/HTTP/Reference/Headers/Date>
+    fn to_http_date(&self) -> String;
+}
+
+impl DateTimeExt for DateTime<Utc> {
+    fn to_http_date(&self) -> String {
+        let mon = match self.month() {
+            1 => "Jan",
+            2 => "Feb",
+            3 => "Mar",
+            4 => "Apr",
+            5 => "May",
+            6 => "Jun",
+            7 => "Jul",
+            8 => "Aug",
+            9 => "Sep",
+            10 => "Oct",
+            11 => "Nov",
+            12 => "Dec",
+            _ => unreachable!(),
+        };
+
+        format!(
+            "{weekday}, {day:02} {mon} {year:04} {hour:02}:{minute:02}:{second:02} GMT",
+            weekday = self.weekday(),
+            day = self.day(),
+            year = self.year(),
+            hour = self.hour(),
+            minute = self.minute(),
+            second = self.second()
+        )
     }
 }
 
@@ -175,8 +225,8 @@ pub trait UrlExt {
 
     /// Displays a URL without its query parameters.
     ///
-    /// This is used to prevent authentication information from being displayed
-    /// to users.
+    /// This is used to prevent potentially sensitive information from being
+    /// displayed to users.
     fn display(&self) -> impl fmt::Display;
 }
 
@@ -238,14 +288,14 @@ impl HttpClient {
     }
 
     /// Constructs a new HTTP client using the given cache directory.
-    pub fn new_with_cache(cache_dir: impl AsRef<Path>) -> Self {
+    pub fn new_with_cache(config: Config, cache_dir: impl AsRef<Path>) -> Self {
         let client = Client::builder()
             .connect_timeout(Self::DEFAULT_CONNECT_TIMEOUT)
             .read_timeout(Self::DEFAULT_READ_TIMEOUT)
             .build()
             .expect("failed to build HTTP client");
 
-        Self::from_existing_with_cache(client, cache_dir)
+        Self::from_existing_with_cache(config, client, cache_dir)
     }
 
     /// Constructs a new HTTP client using an existing client.
@@ -258,14 +308,27 @@ impl HttpClient {
 
     /// Constructs a new HTTP client using an existing client and the given
     /// cache directory.
-    pub fn from_existing_with_cache(client: reqwest::Client, cache_dir: impl AsRef<Path>) -> Self {
+    pub fn from_existing_with_cache(
+        config: Config,
+        client: reqwest::Client,
+        cache_dir: impl AsRef<Path>,
+    ) -> Self {
         let cache_dir = cache_dir.as_ref();
         info!(
             "using HTTP download cache directory `{dir}`",
             dir = cache_dir.display()
         );
 
-        let cache = Arc::new(Cache::new(DefaultCacheStorage::new(cache_dir)));
+        // We must use a revalidation hook to support Azure Storage, which uses
+        // `If-None-Match` as part of its authentication signature
+        let cache = Arc::new(
+            Cache::new(DefaultCacheStorage::new(cache_dir)).with_revalidation_hook(
+                move |request, headers| {
+                    backend::azure::revalidation_hook(&config, request, headers)?;
+                    Ok(())
+                },
+            ),
+        );
 
         Self {
             client: ClientBuilder::new(client).with_arc(cache.clone()).build(),
@@ -601,8 +664,8 @@ async fn copy_local(
 /// * `az` schemed URLs in the format `az://<account>/<container>/<blob>`.
 /// * `https` schemed URLs in the format `https://<account>.blob.core.windows.net/<container>/<blob>`.
 ///
-/// If authentication is required, the URL is expected to contain a SAS token in
-/// its query parameters.
+/// If authentication is required, the provided `Config` must have Azure
+/// authentication information.
 ///
 /// # Amazon S3
 ///
@@ -642,7 +705,7 @@ pub async fn copy(
 
     match (source, destination) {
         (Location::Path(source), Location::Path(destination)) => {
-            if !config.overwrite && destination.exists() {
+            if !config.overwrite() && destination.exists() {
                 return Err(Error::LocalDestinationExists(destination.to_path_buf()));
             }
 
@@ -675,7 +738,7 @@ pub async fn copy(
             }
         }
         (Location::Url(source), Location::Path(destination)) => {
-            if !config.overwrite && destination.exists() {
+            if !config.overwrite() && destination.exists() {
                 return Err(Error::LocalDestinationExists(destination.to_path_buf()));
             }
 
@@ -803,13 +866,9 @@ mod test {
             "https://foo.storage.googleapis.com/bar/baz"
         );
 
-        let config = Config {
-            s3: S3Config {
-                region: Some("my-region".into()),
-                ..Default::default()
-            },
-            ..Default::default()
-        };
+        let config = Config::builder()
+            .with_s3(S3Config::default().with_region("my-region"))
+            .build();
 
         assert_eq!(
             rewrite_url(&config, &"s3://foo/bar/baz".parse().unwrap())
@@ -818,14 +877,10 @@ mod test {
             "https://foo.s3.my-region.amazonaws.com/bar/baz"
         );
 
-        let config = Config {
-            azure: AzureConfig { use_azurite: true },
-            s3: S3Config {
-                use_localstack: true,
-                ..Default::default()
-            },
-            ..Default::default()
-        };
+        let config = Config::builder()
+            .with_azure(AzureConfig::default().with_use_azurite(true))
+            .with_s3(S3Config::default().with_use_localstack(true))
+            .build();
 
         assert_eq!(
             rewrite_url(&config, &"az://foo/bar/baz".parse().unwrap())
