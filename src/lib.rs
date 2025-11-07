@@ -889,7 +889,7 @@ impl ContentDigest {
 /// * If the response contains a strong `ETag` header, the value is returned as
 ///   [`ContentDigest::ETag`].
 ///
-/// Returns `Ok(None)` If the resource does not have a known content digest.
+/// Returns `Ok(None)` if the resource does not have a known content digest.
 ///
 /// [content-digest]: https://developer.mozilla.org/en-US/docs/Web/HTTP/Reference/Headers/Content-Digest
 pub async fn get_content_digest(
