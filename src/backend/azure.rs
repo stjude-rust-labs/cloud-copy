@@ -77,6 +77,14 @@ const AZURE_BLOB_TYPE: &str = "BlockBlob";
 /// The name of the root container.
 const AZURE_ROOT_CONTAINER: &str = "$root";
 
+/// The Azure content digest header name.
+///
+/// This is the content digest for the entire blob.
+///
+/// Note: the metadata name *must* be a legal C# identifier (i.e. cannot contain
+/// `-`).
+pub(crate) const AZURE_CONTENT_DIGEST_HEADER: &str = "x-ms-meta-content_digest";
+
 /// Inserts the authentication header to the request.
 fn insert_authentication_header(auth: &AzureAuthConfig, request: &mut Request) -> Result<()> {
     let signer = RequestSigner::new(auth);
@@ -251,6 +259,8 @@ pub struct AzureBlobUpload {
     url: Url,
     /// The Azure block id.
     block_id: Arc<String>,
+    /// The content digest header value of the blob.
+    digest: Option<String>,
     /// The channel for sending progress updates.
     events: Option<broadcast::Sender<TransferEvent>>,
 }
@@ -262,6 +272,7 @@ impl AzureBlobUpload {
         client: HttpClient,
         url: Url,
         block_id: Arc<String>,
+        digest: Option<String>,
         events: Option<broadcast::Sender<TransferEvent>>,
     ) -> Self {
         Self {
@@ -269,6 +280,7 @@ impl AzureBlobUpload {
             client,
             url,
             block_id,
+            digest,
             events,
         }
     }
@@ -366,6 +378,15 @@ impl Upload for AzureBlobUpload {
             .header(AZURE_VERSION_HEADER, AZURE_STORAGE_VERSION)
             .body(body)
             .build()?;
+
+        if let Some(digest) = &self.digest {
+            request.headers_mut().insert(
+                AZURE_CONTENT_DIGEST_HEADER,
+                digest
+                    .try_into()
+                    .expect("invalid content digest header value"),
+            );
+        }
 
         if let Some(auth) = self.config.azure().auth() {
             insert_authentication_header(auth, &mut request)?;
@@ -778,7 +799,7 @@ impl StorageBackend for AzureBlobStorageBackend {
         Ok(paths)
     }
 
-    async fn new_upload(&self, url: Url) -> Result<Self::Upload> {
+    async fn new_upload(&self, url: Url, digest: Option<String>) -> Result<Self::Upload> {
         debug_assert!(
             Self::is_supported_url(&self.config, &url),
             "{url} is not a supported Azure URL",
@@ -800,6 +821,7 @@ impl StorageBackend for AzureBlobStorageBackend {
             self.client.clone(),
             url,
             Arc::new(Alphanumeric::new(16).to_string()),
+            digest,
             self.events.clone(),
         ))
     }

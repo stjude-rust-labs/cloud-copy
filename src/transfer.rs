@@ -634,6 +634,15 @@ where
 
     /// Uploads the given file to the given destination.
     async fn upload_file(&self, source: &Path, destination: Url, file_size: u64) -> Result<()> {
+        // Calculate the content digest
+        let digest = self
+            .inner
+            .backend
+            .config()
+            .hash_algorithm()
+            .calculate_content_digest(source)
+            .await?;
+
         // Create the upload (retryable)
         // This is performed before we send transfer events in case the resource already
         // exists and we're not overwriting
@@ -644,7 +653,7 @@ where
                     select! {
                         biased;
                         _ = self.cancel.cancelled() => Err(Error::Canceled),
-                        r =  self.inner.backend.new_upload(destination.clone()) => r,
+                        r =  self.inner.backend.new_upload(destination.clone(), digest.clone()) => r,
                     }
                     .map_err(Error::into_retry_error)
                 },

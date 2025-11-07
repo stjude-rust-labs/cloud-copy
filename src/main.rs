@@ -15,6 +15,7 @@ use clap_verbosity_flag::WarnLevel;
 use cloud_copy::AzureConfig;
 use cloud_copy::Config;
 use cloud_copy::GoogleConfig;
+use cloud_copy::HashAlgorithm;
 use cloud_copy::HttpClient;
 use cloud_copy::Location;
 use cloud_copy::S3Config;
@@ -30,6 +31,7 @@ use tracing_indicatif::IndicatifLayer;
 use tracing_subscriber::EnvFilter;
 use tracing_subscriber::layer::SubscriberExt;
 
+/// A utility for transferring files to and from cloud storage services.
 #[derive(Parser, Debug)]
 struct Args {
     /// The source location to copy from.
@@ -43,6 +45,12 @@ struct Args {
     /// The cache directory to use for downloads.
     #[clap(long, value_name = "DIR")]
     cache_dir: Option<PathBuf>,
+
+    /// The hash algorithm to use for calculating content digests.
+    ///
+    /// Defaults to `sha256`.
+    #[clap(long, value_name = "ALGO")]
+    hash_algorithm: Option<HashAlgorithm>,
 
     /// Whether or not to create hard links to existing cached files.
     #[clap(long)]
@@ -146,6 +154,7 @@ impl Args {
         };
 
         let config = Config::builder()
+            .with_hash_algorithm(self.hash_algorithm.unwrap_or_default())
             .with_link_to_cache(self.link_to_cache)
             .with_overwrite(self.overwrite)
             .with_maybe_block_size(self.block_size)
@@ -257,8 +266,8 @@ async fn run(cancel: CancellationToken) -> Result<()> {
     result
 }
 
-#[cfg(unix)]
 /// An async function that waits for a termination signal.
+#[cfg(unix)]
 async fn terminate(cancel: CancellationToken) {
     use tokio::select;
     use tokio::signal::unix::SignalKind;
@@ -277,8 +286,8 @@ async fn terminate(cancel: CancellationToken) {
     cancel.cancel();
 }
 
-#[cfg(windows)]
 /// An async function that waits for a termination signal.
+#[cfg(windows)]
 async fn terminate(cancel: CancellationToken) {
     use tokio::signal::windows::ctrl_c;
     use tracing::info;

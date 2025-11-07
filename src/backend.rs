@@ -110,5 +110,14 @@ pub trait StorageBackend {
     fn walk(&self, url: Url) -> impl Future<Output = Result<Vec<String>>> + Send;
 
     /// Creates a new upload.
-    fn new_upload(&self, url: Url) -> impl Future<Output = Result<Self::Upload>> + Send;
+    ///
+    /// If `digest` is `Some`, it is expected to be a `Content-Digest` header
+    /// value.
+    ///
+    /// See: <https://developer.mozilla.org/en-US/docs/Web/HTTP/Reference/Headers/Content-Digest>
+    fn new_upload(
+        &self,
+        url: Url,
+        digest: Option<String>,
+    ) -> impl Future<Output = Result<Self::Upload>> + Send;
 }

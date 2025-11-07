@@ -10,7 +10,9 @@ use anyhow::bail;
 use cloud_copy::Alphanumeric;
 use cloud_copy::AzureConfig;
 use cloud_copy::Config;
+use cloud_copy::ContentDigest;
 use cloud_copy::Error;
+use cloud_copy::HashAlgorithm;
 use cloud_copy::HttpClient;
 use cloud_copy::Location;
 use cloud_copy::S3Config;
@@ -172,20 +174,25 @@ fn urls(test: &str) -> Vec<Url> {
     ]
 }
 
+fn azure_config() -> AzureConfig {
+    AzureConfig::default().with_use_azurite(true).with_auth(
+        "devstoreaccount1",
+        // This is the Azurite secret key used for testing; it is not a secret
+        "Eby8vdM02xNOcqFlqUwJPLlmEtlCDXJ1OUzFT50uSRZ6IFsuFq2UVErCz4I6tq/K1SZFPTOtr/KBHBeksoGMGw==",
+    )
+}
+
+fn s3_config() -> S3Config {
+    S3Config::default()
+        .with_use_localstack(true)
+        .with_auth("test", "test")
+}
+
 fn config(overwrite: bool) -> Config {
     Config::builder()
         .with_overwrite(overwrite)
-        .with_azure(AzureConfig::default().with_use_azurite(true).with_auth(
-            "devstoreaccount1",
-            // This is the Azurite secret key used for testing; it is not a secret
-            "Eby8vdM02xNOcqFlqUwJPLlmEtlCDXJ1OUzFT50uSRZ6IFsuFq2UVErCz4I6tq/K1SZFPTOtr/\
-             KBHBeksoGMGw==",
-        ))
-        .with_s3(
-            S3Config::default()
-                .with_use_localstack(true)
-                .with_auth("test", "test"),
-        )
+        .with_azure(azure_config())
+        .with_s3(s3_config())
         .build()
 }
 
@@ -753,6 +760,76 @@ async fn walk() -> Result<()> {
             &["0", "1", "2", "3", "4", "5", "6", "7", "8", "9"],
             "unexpected walk output for URL `{url}`"
         );
+    }
+
+    Ok(())
+}
+
+/// Tests that we store and retrieve content digests
+#[tokio::test]
+async fn digests() -> Result<()> {
+    const FILE_SIZE: u64 = 1024;
+
+    let test = format!("{random}", random = Alphanumeric::new(10));
+
+    let client = HttpClient::default();
+    let cancel = CancellationToken::new();
+
+    // Create a new temp file
+    let (file, source) = NamedTempFile::new()
+        .context("failed to create temp file")?
+        .into_parts();
+    write_random_bytes(file.into(), FILE_SIZE as usize)
+        .await
+        .context("failed to write random bytes into file")?;
+
+    // Upload for each supported hash algorithm
+    for algorithm in [
+        HashAlgorithm::None,
+        HashAlgorithm::Sha256,
+        HashAlgorithm::Blake3,
+    ] {
+        let config = Config::builder()
+            .with_overwrite(true)
+            .with_hash_algorithm(algorithm)
+            .with_azure(azure_config())
+            .with_s3(s3_config())
+            .build();
+
+        // Calculate an expected digest for the file's contents
+        let expected_digest = algorithm
+            .calculate_content_digest(&source)
+            .await
+            .unwrap()
+            .map(|v| ContentDigest::parse_header(&v).unwrap());
+
+        for url in urls(&test) {
+            // Copy the local file to the cloud
+            cloud_copy::copy(
+                config.clone(),
+                client.clone(),
+                &*source,
+                url.clone(),
+                cancel.clone(),
+                None,
+            )
+            .await
+            .context("failed to upload file")?;
+
+            let digest =
+                cloud_copy::get_content_digest(config.clone(), client.clone(), url.clone()).await?;
+            match (&expected_digest, &digest) {
+                (None, Some(ContentDigest::ETag(v))) => {
+                    // The emulators return an `ETag` header for the objects; ensure it is always a
+                    // strong validator
+                    assert!(!v.starts_with("W/"));
+                }
+                (Some(expected), Some(actual)) => {
+                    assert_eq!(expected, actual, "digest mismatch");
+                }
+                _ => panic!("unexpected content digest `{digest:?}` for `{url}`"),
+            }
+        }
     }
 
     Ok(())
