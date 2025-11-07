@@ -360,6 +360,7 @@ dependencies = [
  "colored",
  "crc64fast-nvme",
  "futures",
+ "git-testament",
  "hex",
  "hmac",
  "http-cache-stream-reqwest",
@@ -749,6 +750,28 @@ dependencies = [
  "libc",
  "r-efi",
  "wasip2",
+]
+
+[[package]]
+name = "git-testament"
+version = "0.2.6"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "5a74999c921479f919c87a9d2e6922a79a18683f18105344df8e067149232e51"
+dependencies = [
+ "git-testament-derive",
+]
+
+[[package]]
+name = "git-testament-derive"
+version = "0.2.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "bbeac967e71eb3dc1656742fc7521ec7cd3b6b88738face65bf1fddf702bc4c0"
+dependencies = [
+ "log",
+ "proc-macro2",
+ "quote",
+ "syn 2.0.109",
+ "time",
 ]
 
 [[package]]

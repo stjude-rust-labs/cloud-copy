@@ -100,7 +100,7 @@ Install a Rust toolchain via [`rustup`](https://rustup.rs/).
 To install `cloud-copy`, run the following command:
 
 ```bash
-cargo install --features=cli --git https://github.com/stjude-rust-labs/cloud-copy.git
+cargo install --features=cli cloud-copy
 ```
 
 ### Using `cloud-copy`

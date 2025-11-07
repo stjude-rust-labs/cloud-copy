@@ -26,6 +26,7 @@ cli = [
     "dep:tracing-indicatif",
     "dep:tracing-subscriber",
     "dep:byte-unit",
+    "dep:git-testament",
 ]
 
 [dependencies]
@@ -35,11 +36,12 @@ blake3 = { version = "1.8.2", features = ["mmap", "rayon"] }
 byte-unit = { version = "5.1.6", optional = true }
 bytes = "1.10.1"
 chrono = { version = "0.4.41", features = ["serde"] }
-clap = { version = "4.5.44", features = ["derive", "env"], optional = true }
+clap = { version = "4.5.44", features = ["derive", "env", "string"], optional = true }
 clap-verbosity-flag = { version = "3.0.3", features = ["tracing"], optional = true }
 colored = { version = "3.0.0", optional = true }
 crc64fast-nvme = "1.2.0"
 futures = "0.3.31"
+git-testament = { version = "0.2.6", optional = true }
 hex = "0.4.3"
 hmac = "0.12.1"
 http-cache-stream-reqwest = "0.3.0"
