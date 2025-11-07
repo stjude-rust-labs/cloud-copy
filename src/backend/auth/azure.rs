@@ -182,13 +182,21 @@ impl<'a> RequestSigner<'a> {
     ) -> String {
         let mut headers = BTreeMap::new();
         for (k, v) in microsoft_headers {
-            if headers
-                .insert(
-                    k.as_str(),
-                    v.to_str().expect("expected a string value").trim(),
-                )
-                .is_some()
-            {
+            let value = v.to_str().expect("expected a string value");
+
+            // The whitespace normalization of canonical header values requires that the
+            // string be trimmed and consecutive whitespace replaced with a single space
+            // (but also preserve whitespace in "quoted strings").
+            //
+            // As we don't currently send any canonical header values with whitespace,
+            // this ensures that remains the case. If this assert fires, we'll need to
+            // implement the whitespace normalization.
+            debug_assert!(
+                !value.chars().any(|c| c.is_whitespace()),
+                "canonical Azure header contains whitespace"
+            );
+
+            if headers.insert(k.as_str(), value).is_some() {
                 panic!("duplicate header `{k}`", k = k.as_str());
             }
         }
@@ -206,7 +214,7 @@ impl<'a> RequestSigner<'a> {
 
     /// Formats a canonical resource string.
     ///
-    /// See: https://learn.microsoft.com/en-us/rest/api/storageservices/authorize-with-shared-key#constructing-the-canonicalized-resource-string
+    /// See: <https://learn.microsoft.com/en-us/rest/api/storageservices/authorize-with-shared-key#constructing-the-canonicalized-resource-string>
     ///
     /// # Panics
     ///
@@ -222,18 +230,20 @@ impl<'a> RequestSigner<'a> {
         canonical_resource.push_str(self.0.account_name());
         canonical_resource.push_str(path);
 
-        let mut parameters = BTreeMap::new();
-        for (k, v) in query_pairs {
-            if parameters.insert(k.clone(), v).is_some() {
-                panic!("duplicate query parameter `{k}`");
-            }
+        let mut parameters: BTreeMap<_, Vec<_>> = BTreeMap::new();
+        for (key, value) in query_pairs {
+            parameters
+                .entry(key.to_lowercase())
+                .or_default()
+                .push(value);
         }
 
-        for (k, v) in parameters {
+        for (key, mut values) in parameters {
+            values.sort();
             canonical_resource.push('\n');
-            canonical_resource.push_str(&k);
+            canonical_resource.push_str(&key);
             canonical_resource.push(':');
-            canonical_resource.push_str(&v);
+            canonical_resource.push_str(&values.join(","));
         }
 
         canonical_resource

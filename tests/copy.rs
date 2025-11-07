@@ -177,6 +177,7 @@ fn config(overwrite: bool) -> Config {
         .with_overwrite(overwrite)
         .with_azure(AzureConfig::default().with_use_azurite(true).with_auth(
             "devstoreaccount1",
+            // This is the Azurite secret key used for testing; it is not a secret
             "Eby8vdM02xNOcqFlqUwJPLlmEtlCDXJ1OUzFT50uSRZ6IFsuFq2UVErCz4I6tq/K1SZFPTOtr/\
              KBHBeksoGMGw==",
         ))

@@ -3,6 +3,7 @@
 //! This authentication scheme is also used by Google Cloud Storage via their
 //! AWS compatibility layer.
 
+use std::collections::BTreeMap;
 use std::ops::Deref;
 
 use chrono::DateTime;
@@ -104,19 +105,26 @@ where
     fn create_canonical_request(&self, request: &Request) -> String {
         let url = request.url();
 
-        // Sort the query pairs
-        let mut query = url.query_pairs().collect::<Vec<_>>();
-        query.sort_by(|(a, _), (b, _)| a.cmp(b));
+        // Sort the query pairs by the encoded key
+        let mut parameters: BTreeMap<_, Vec<_>> = BTreeMap::new();
+        for (k, v) in url.query_pairs() {
+            parameters
+                .entry(urlencoding::encode(&k).into_owned())
+                .or_default()
+                .push(urlencoding::encode(&v).into_owned());
+        }
 
         let mut query_string = String::new();
-        for (key, value) in query {
-            if !query_string.is_empty() {
-                query_string.push('&');
-            }
+        for (key, values) in parameters {
+            for value in values {
+                if !query_string.is_empty() {
+                    query_string.push('&');
+                }
 
-            query_string.push_str(&urlencoding::encode(&key));
-            query_string.push('=');
-            query_string.push_str(&urlencoding::encode(&value));
+                query_string.push_str(&key);
+                query_string.push('=');
+                query_string.push_str(&value);
+            }
         }
 
         // Get the date header
