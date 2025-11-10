@@ -330,27 +330,9 @@ impl GoogleConfig {
     }
 }
 
-/// Stores the inner configuration for [`Config`].
+/// Stores the inner backend configuration for [`Config`].
 #[derive(Debug, Default, Deserialize)]
-struct ConfigInner {
-    /// The hash algorithm to use for calculating content digests.
-    #[serde(default)]
-    algorithm: HashAlgorithm,
-    /// Stores whether or not we're linking to cache entries.
-    #[serde(default)]
-    link_to_cache: bool,
-    /// Stores whether or not the destination should be overwritten.
-    #[serde(default)]
-    overwrite: bool,
-    /// Stores the block size to use for file transfers.
-    #[serde(default)]
-    block_size: Option<u64>,
-    /// Stores the parallelism level for network operations.
-    #[serde(default)]
-    parallelism: Option<usize>,
-    /// Stores the number of retries to attempt for network operations.
-    #[serde(default)]
-    retries: Option<usize>,
+struct BackendConfig {
     /// Stores the Azure Storage configuration.
     #[serde(default)]
     azure: AzureConfig,
@@ -364,13 +346,28 @@ struct ConfigInner {
 
 /// Used to build a [`Config`].
 #[derive(Debug, Default)]
-pub struct ConfigBuilder(ConfigInner);
+pub struct ConfigBuilder {
+    /// The hash algorithm to use for calculating content digests.
+    algorithm: HashAlgorithm,
+    /// Stores whether or not we're linking to cache entries.
+    link_to_cache: bool,
+    /// Stores whether or not the destination should be overwritten.
+    overwrite: bool,
+    /// Stores the block size to use for file transfers.
+    block_size: Option<u64>,
+    /// Stores the parallelism level for network operations.
+    parallelism: Option<usize>,
+    /// Stores the number of retries to attempt for network operations.
+    retries: Option<usize>,
+    /// The backend configuration for the `Config`.
+    backends: BackendConfig,
+}
 
 impl ConfigBuilder {
     /// Sets the hash algorithm to use for calculating content digests of
     /// uploads.
     pub fn with_hash_algorithm(mut self, algorithm: HashAlgorithm) -> Self {
-        self.0.algorithm = algorithm;
+        self.algorithm = algorithm;
         self
     }
 
@@ -391,7 +388,7 @@ impl ConfigBuilder {
     ///
     /// When `false`, a copy to the destination is always performed.
     pub fn with_link_to_cache(mut self, link_to_cache: bool) -> Self {
-        self.0.link_to_cache = link_to_cache;
+        self.link_to_cache = link_to_cache;
         self
     }
 
@@ -404,7 +401,7 @@ impl ConfigBuilder {
     /// be made for the URL; if the request succeeds, the copy operation will
     /// fail.
     pub fn with_overwrite(mut self, overwrite: bool) -> Self {
-        self.0.overwrite = overwrite;
+        self.overwrite = overwrite;
         self
     }
 
@@ -412,7 +409,7 @@ impl ConfigBuilder {
     ///
     /// The default block size depends on the cloud storage service.
     pub fn with_block_size(mut self, block_size: u64) -> Self {
-        self.0.block_size = Some(block_size);
+        self.block_size = Some(block_size);
         self
     }
 
@@ -422,7 +419,7 @@ impl ConfigBuilder {
     ///
     /// The default block size depends on the cloud storage service.
     pub fn with_maybe_block_size(mut self, block_size: Option<u64>) -> Self {
-        self.0.block_size = block_size;
+        self.block_size = block_size;
         self
     }
 
@@ -437,7 +434,7 @@ impl ConfigBuilder {
     /// Defaults to the host's available parallelism (or 1 if it cannot be
     /// determined).
     pub fn with_parallelism(mut self, parallelism: usize) -> Self {
-        self.0.parallelism = Some(parallelism);
+        self.parallelism = Some(parallelism);
         self
     }
 
@@ -454,7 +451,7 @@ impl ConfigBuilder {
     /// Defaults to the host's available parallelism (or 1 if it cannot be
     /// determined).
     pub fn with_maybe_parallelism(mut self, parallelism: Option<usize>) -> Self {
-        self.0.parallelism = parallelism;
+        self.parallelism = parallelism;
         self
     }
 
@@ -462,7 +459,7 @@ impl ConfigBuilder {
     ///
     /// Defaults to `5`.
     pub fn with_retries(mut self, retries: usize) -> Self {
-        self.0.retries = Some(retries);
+        self.retries = Some(retries);
         self
     }
 
@@ -472,31 +469,39 @@ impl ConfigBuilder {
     ///
     /// Defaults to `5`.
     pub fn with_maybe_retries(mut self, retries: Option<usize>) -> Self {
-        self.0.retries = retries;
+        self.retries = retries;
         self
     }
 
     /// Sets the Azure Storage configuration to use.
     pub fn with_azure(mut self, azure: AzureConfig) -> Self {
-        self.0.azure = azure;
+        self.backends.azure = azure;
         self
     }
 
     /// Sets the Amazon S3 configuration to use.
     pub fn with_s3(mut self, s3: S3Config) -> Self {
-        self.0.s3 = s3;
+        self.backends.s3 = s3;
         self
     }
 
     /// Sets the Google Cloud Storage configuration to use.
     pub fn with_google(mut self, google: GoogleConfig) -> Self {
-        self.0.google = google;
+        self.backends.google = google;
         self
     }
 
     /// Consumes the builder and returns the [`Config`].
     pub fn build(self) -> Config {
-        Config(Arc::new(self.0))
+        Config {
+            algorithm: self.algorithm,
+            link_to_cache: self.link_to_cache,
+            overwrite: self.overwrite,
+            block_size: self.block_size,
+            parallelism: self.parallelism,
+            retries: self.retries,
+            backends: Arc::new(self.backends),
+        }
     }
 }
 
@@ -504,7 +509,29 @@ impl ConfigBuilder {
 ///
 /// A [`Config`] is cheaply cloned.
 #[derive(Debug, Clone, Default, Deserialize)]
-pub struct Config(Arc<ConfigInner>);
+pub struct Config {
+    /// The hash algorithm to use for calculating content digests.
+    #[serde(default)]
+    algorithm: HashAlgorithm,
+    /// Stores whether or not we're linking to cache entries.
+    #[serde(default)]
+    link_to_cache: bool,
+    /// Stores whether or not the destination should be overwritten.
+    #[serde(default)]
+    overwrite: bool,
+    /// Stores the block size to use for file transfers.
+    #[serde(default)]
+    block_size: Option<u64>,
+    /// Stores the parallelism level for network operations.
+    #[serde(default)]
+    parallelism: Option<usize>,
+    /// Stores the number of retries to attempt for network operations.
+    #[serde(default)]
+    retries: Option<usize>,
+    /// Stores the backend configuration.
+    #[serde(default)]
+    backends: Arc<BackendConfig>,
+}
 
 impl Config {
     /// Gets a [`ConfigBuilder`] for building a new [`Config`].
@@ -514,7 +541,12 @@ impl Config {
 
     /// Gets the hash algorithm used for calculating content digests of uploads.
     pub fn hash_algorithm(&self) -> HashAlgorithm {
-        self.0.algorithm
+        self.algorithm
+    }
+
+    /// Sets the hash algorithm used for calculating content digests of uploads.
+    pub fn set_hash_algorithm(&mut self, algorithm: HashAlgorithm) {
+        self.algorithm = algorithm;
     }
 
     /// Gets whether or not cache entries should be linked.
@@ -534,7 +566,12 @@ impl Config {
     ///
     /// When `false`, a copy to the destination is always performed.
     pub fn link_to_cache(&self) -> bool {
-        self.0.link_to_cache
+        self.link_to_cache
+    }
+
+    /// Sets whether or not cache entries should be linked.
+    pub fn set_link_to_cache(&mut self, link_to_cache: bool) {
+        self.link_to_cache = link_to_cache;
     }
 
     /// Gets whether or not the destination should be overwritten.
@@ -546,14 +583,24 @@ impl Config {
     /// be made for the URL; if the request succeeds, the copy operation will
     /// fail.
     pub fn overwrite(&self) -> bool {
-        self.0.overwrite
+        self.overwrite
+    }
+
+    /// Sets whether or not the destination should be overwritten.
+    pub fn set_overwrite(&mut self, overwrite: bool) {
+        self.overwrite = overwrite;
     }
 
     /// Gets the block size to use for file transfers.
     ///
     /// The default block size depends on the cloud storage service.
     pub fn block_size(&self) -> Option<u64> {
-        self.0.block_size
+        self.block_size
+    }
+
+    /// Sets the block size fot use for file transfers.
+    pub fn set_block_size(&mut self, block_size: u64) {
+        self.block_size = Some(block_size);
     }
 
     /// Gets the parallelism supported for uploads and downloads.
@@ -567,31 +614,40 @@ impl Config {
     /// Defaults to the host's available parallelism (or 1 if it cannot be
     /// determined).
     pub fn parallelism(&self) -> usize {
-        self.0
-            .parallelism
+        self.parallelism
             .unwrap_or_else(|| available_parallelism().map(NonZero::get).unwrap_or(1))
+    }
+
+    /// Sets the parallelism supported for uploads and downloads.
+    pub fn set_parallelism(&mut self, parallelism: usize) {
+        self.parallelism = Some(parallelism);
     }
 
     /// Gets the number of retries to attempt for network operations.
     ///
     /// Defaults to `5`.
     pub fn retries(&self) -> usize {
-        self.0.retries.unwrap_or(DEFAULT_RETRIES)
+        self.retries.unwrap_or(DEFAULT_RETRIES)
+    }
+
+    /// Sets the number of retries to attempt for network operations.
+    pub fn set_retries(&mut self, retries: usize) {
+        self.retries = Some(retries);
     }
 
     /// Gets the Azure Storage configuration.
     pub fn azure(&self) -> &AzureConfig {
-        &self.0.azure
+        &self.backends.azure
     }
 
     /// Gets the Amazon S3 configuration.
     pub fn s3(&self) -> &S3Config {
-        &self.0.s3
+        &self.backends.s3
     }
 
     /// Gets the Google Cloud Storage configuration.
     pub fn google(&self) -> &GoogleConfig {
-        &self.0.google
+        &self.backends.google
     }
 
     /// Gets an iterator over the retry durations for network operations.
