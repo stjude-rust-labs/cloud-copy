@@ -330,9 +330,9 @@ impl GoogleConfig {
     }
 }
 
-/// Stores the inner backend configuration for [`Config`].
+/// Stores the inner backends configuration for [`Config`].
 #[derive(Debug, Default, Deserialize)]
-struct BackendConfig {
+struct BackendsConfig {
     /// Stores the Azure Storage configuration.
     #[serde(default)]
     azure: AzureConfig,
@@ -359,8 +359,8 @@ pub struct ConfigBuilder {
     parallelism: Option<usize>,
     /// Stores the number of retries to attempt for network operations.
     retries: Option<usize>,
-    /// The backend configuration for the `Config`.
-    backends: BackendConfig,
+    /// The backends configuration for the `Config`.
+    backends: BackendsConfig,
 }
 
 impl ConfigBuilder {
@@ -528,9 +528,9 @@ pub struct Config {
     /// Stores the number of retries to attempt for network operations.
     #[serde(default)]
     retries: Option<usize>,
-    /// Stores the backend configuration.
+    /// Stores the backends configuration.
     #[serde(default)]
-    backends: Arc<BackendConfig>,
+    backends: Arc<BackendsConfig>,
 }
 
 impl Config {
