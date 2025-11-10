@@ -23,6 +23,8 @@ use cloud_copy::cli::TimeDeltaExt;
 use cloud_copy::cli::handle_events;
 use cloud_copy::copy;
 use colored::Colorize;
+use git_testament::git_testament;
+use git_testament::render_testament;
 use secrecy::SecretString;
 use tokio::pin;
 use tokio::sync::broadcast;
@@ -31,8 +33,11 @@ use tracing_indicatif::IndicatifLayer;
 use tracing_subscriber::EnvFilter;
 use tracing_subscriber::layer::SubscriberExt;
 
+git_testament!(TESTAMENT);
+
 /// A utility for transferring files to and from cloud storage services.
 #[derive(Parser, Debug)]
+#[command(version = render_testament!(TESTAMENT), propagate_version = true)]
 struct Args {
     /// The source location to copy from.
     #[clap(value_name = "SOURCE")]
