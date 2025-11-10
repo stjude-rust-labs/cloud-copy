@@ -17,6 +17,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 #### Changed
 
+* `Config` now has mutable fields ([#29](https://github.com/stjude-rust-labs/cloud-copy/pull/29)).
 * `Config` now implements a builder pattern for setting configuration options ([#26](https://github.com/stjude-rust-labs/cloud-copy/pull/26)).
 
 ## 0.4.0 - 10-13-2025
