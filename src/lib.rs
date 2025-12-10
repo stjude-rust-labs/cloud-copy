@@ -822,17 +822,17 @@ pub async fn walk(config: Config, client: HttpClient, mut url: Url) -> Result<Ve
     if AzureBlobStorageBackend::is_supported_url(&config, &url) {
         let url = AzureBlobStorageBackend::rewrite_url(&config, &url)?;
         AzureBlobStorageBackend::new(config, client, None)
-            .walk(url.into_owned())
+            .walk(url.into_owned(), false)
             .await
     } else if S3StorageBackend::is_supported_url(&config, &url) {
         let url = S3StorageBackend::rewrite_url(&config, &url)?;
         S3StorageBackend::new(config, client, None)
-            .walk(url.into_owned())
+            .walk(url.into_owned(), false)
             .await
     } else if GoogleStorageBackend::is_supported_url(&config, &url) {
         let url = GoogleStorageBackend::rewrite_url(&config, &url)?;
         GoogleStorageBackend::new(config, client, None)
-            .walk(url.into_owned())
+            .walk(url.into_owned(), false)
             .await
     } else {
         Err(Error::UnsupportedUrl(url))
@@ -952,6 +952,90 @@ pub async fn get_content_digest(
     }
 
     Ok(None)
+}
+
+/// Determines if the given URL exists.
+///
+/// Returns `Ok(true)` if a HEAD request returns success or if a walk of the
+/// URL returns at least one contained URL.
+pub async fn exists(config: Config, client: HttpClient, url: Url) -> Result<bool> {
+    // Check for local file
+    if url.scheme() == "file" {
+        let path = url.to_file_path().map_err(|_| Error::InvalidFileUrl(url))?;
+        return Ok(path.exists());
+    }
+
+    if AzureBlobStorageBackend::is_supported_url(&config, &url) {
+        let url = AzureBlobStorageBackend::rewrite_url(&config, &url)?;
+        let backend = AzureBlobStorageBackend::new(config, client, None);
+        let response = backend.head(url.as_ref().clone(), false).await?;
+        if response.status().is_success() {
+            return Ok(true);
+        }
+
+        // Check for a directory URL
+        Ok(!backend.walk(url.into_owned(), true).await?.is_empty())
+    } else if S3StorageBackend::is_supported_url(&config, &url) {
+        let url = S3StorageBackend::rewrite_url(&config, &url)?;
+        let backend = S3StorageBackend::new(config, client, None);
+        let response = backend.head(url.as_ref().clone(), false).await?;
+        if response.status().is_success() {
+            return Ok(true);
+        }
+
+        // Check for a directory URL
+        Ok(!backend.walk(url.into_owned(), true).await?.is_empty())
+    } else if GoogleStorageBackend::is_supported_url(&config, &url) {
+        let url = GoogleStorageBackend::rewrite_url(&config, &url)?;
+        let backend = GoogleStorageBackend::new(config, client, None);
+        let response = backend.head(url.as_ref().clone(), false).await?;
+        if response.status().is_success() {
+            return Ok(true);
+        }
+
+        // Check for a directory URL
+        Ok(!backend.walk(url.into_owned(), true).await?.is_empty())
+    } else {
+        let backend = GenericStorageBackend::new(config, client, None);
+        Ok(backend.head(url, false).await?.status().is_success())
+    }
+}
+
+/// Gets the size of a resource at a given URL.
+///
+/// Returns `Ok(Some(_))` if the size is known.
+///
+/// Returns `Ok(None)` if the URL is valid but the size cannot be
+/// determined.
+pub async fn size(config: Config, client: HttpClient, url: Url) -> Result<Option<u64>> {
+    // Check for local file
+    if url.scheme() == "file" {
+        let path = url.to_file_path().map_err(|_| Error::InvalidFileUrl(url))?;
+        let metadata = path.metadata()?;
+        return Ok(Some(metadata.len()));
+    }
+
+    let response = if AzureBlobStorageBackend::is_supported_url(&config, &url) {
+        let url = AzureBlobStorageBackend::rewrite_url(&config, &url)?;
+        let backend = AzureBlobStorageBackend::new(config, client, None);
+        backend.head(url.as_ref().clone(), true).await?
+    } else if S3StorageBackend::is_supported_url(&config, &url) {
+        let url = S3StorageBackend::rewrite_url(&config, &url)?;
+        let backend = S3StorageBackend::new(config, client, None);
+        backend.head(url.as_ref().clone(), true).await?
+    } else if GoogleStorageBackend::is_supported_url(&config, &url) {
+        let url = GoogleStorageBackend::rewrite_url(&config, &url)?;
+        let backend = GoogleStorageBackend::new(config, client, None);
+        backend.head(url.as_ref().clone(), true).await?
+    } else {
+        let backend = GenericStorageBackend::new(config, client, None);
+        backend.head(url, false).await?
+    };
+
+    Ok(response
+        .headers()
+        .get("content-length")
+        .and_then(|v| v.to_str().ok().and_then(|v| v.parse().ok())))
 }
 
 #[cfg(test)]

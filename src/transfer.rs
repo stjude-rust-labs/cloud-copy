@@ -531,7 +531,7 @@ where
                 select! {
                     biased;
                     _ = self.cancel.cancelled() => Err(Error::Canceled),
-                    r = self.inner.backend.walk(source.clone()) => r
+                    r = self.inner.backend.walk(source.clone(), false) => r
                 }
                 .map_err(Error::into_retry_error)
             },
