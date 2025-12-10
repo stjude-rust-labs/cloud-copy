@@ -834,3 +834,125 @@ async fn digests() -> Result<()> {
 
     Ok(())
 }
+
+/// Tests that we correctly determine if URLs exist.
+#[tokio::test]
+async fn exists() -> Result<()> {
+    let test = format!("{random}", random = Alphanumeric::new(10));
+    let source = tempdir().context("failed to create temporary directory")?;
+
+    create_random_files(source.path(), 2)
+        .await
+        .context("failed to populate temporary directory")?;
+
+    // Upload the source directory
+    let config = config(true);
+    let client = HttpClient::default();
+    let cancel = CancellationToken::new();
+    for url in urls(&test) {
+        // Copy the local directory to the cloud
+        cloud_copy::copy(
+            config.clone(),
+            client.clone(),
+            source.path(),
+            &url,
+            cancel.clone(),
+            None,
+        )
+        .await
+        .context("failed to upload directory")?;
+    }
+
+    // Walk each directory entry (including sub directories) and check for existence
+    for entry in WalkDir::new(source.path()) {
+        let entry = entry.context("walk should succeed")?;
+        let path = entry
+            .path()
+            .strip_prefix(source.path())
+            .context("should be relative")?;
+
+        for mut url in urls(&test) {
+            url.path_segments_mut()
+                .expect("missing path segments")
+                .pop_if_empty()
+                .push("");
+
+            let url = url
+                .join(path.as_os_str().to_str().context("should be UTF-8")?)
+                .context("url should join")?;
+
+            let exists = cloud_copy::exists(config.clone(), client.clone(), url.clone())
+                .await
+                .context("checking for existence")?;
+            assert!(exists, "URL `{url}` should exist");
+
+            let url = url.join("does-not-exist").context("url should join")?;
+            let exists = cloud_copy::exists(config.clone(), client.clone(), url.clone())
+                .await
+                .context("checking for existence")?;
+            assert!(!exists, "URL `{url}` should not exist");
+        }
+    }
+
+    // Check for generic backend
+    assert!(
+        cloud_copy::exists(
+            config.clone(),
+            client.clone(),
+            "https://google.com".parse().context("should parse")?
+        )
+        .await
+        .context("checking for existence")?
+    );
+    assert!(
+        !cloud_copy::exists(
+            config.clone(),
+            client.clone(),
+            "https://google.com/404".parse().context("should parse")?
+        )
+        .await
+        .context("checking for existence")?
+    );
+
+    Ok(())
+}
+
+/// Tests that we correctly determine sizes of files.
+#[tokio::test]
+async fn size() -> Result<()> {
+    const FILE_SIZE: u64 = 1024;
+
+    let test = format!("{random}", random = Alphanumeric::new(10));
+
+    // Create a new temp file
+    let (file, source) = NamedTempFile::new()
+        .context("failed to create temp file")?
+        .into_parts();
+    write_random_bytes(file.into(), FILE_SIZE as usize)
+        .await
+        .context("failed to write random bytes into file")?;
+
+    // Upload the file
+    let config = config(true);
+    let client = HttpClient::default();
+    let cancel = CancellationToken::new();
+    for url in urls(&test) {
+        // Copy the local file to the cloud
+        cloud_copy::copy(
+            config.clone(),
+            client.clone(),
+            source.as_ref() as &Path,
+            &url,
+            cancel.clone(),
+            None,
+        )
+        .await
+        .context("failed to upload directory")?;
+
+        // Check the file size matches
+        let size = cloud_copy::size(config.clone(), client.clone(), url).await?;
+        assert_eq!(size, Some(FILE_SIZE));
+    }
+
+    Ok(())
+}

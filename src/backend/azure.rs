@@ -664,7 +664,7 @@ impl StorageBackend for AzureBlobStorageBackend {
         Ok(response)
     }
 
-    async fn walk(&self, url: Url) -> Result<Vec<String>> {
+    async fn walk(&self, url: Url, first_only: bool) -> Result<Vec<String>> {
         debug_assert!(
             Self::is_supported_url(&self.config, &url),
             "{url} is not a supported Azure URL",
@@ -737,6 +737,11 @@ impl StorageBackend for AzureBlobStorageBackend {
             pairs.append_pair("comp", "list");
             // The prefix to use for listing blobs in the container.
             pairs.append_pair("prefix", &prefix);
+
+            // Only return at most one result if we're returning the first only
+            if first_only {
+                pairs.append_pair("maxresults", "1");
+            }
         }
 
         let mut next = String::new();
@@ -791,7 +796,7 @@ impl StorageBackend for AzureBlobStorageBackend {
             }));
 
             next = results.next.unwrap_or_default();
-            if next.is_empty() {
+            if first_only || next.is_empty() {
                 break;
             }
         }

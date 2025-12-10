@@ -749,7 +749,7 @@ impl StorageBackend for S3StorageBackend {
         Ok(response)
     }
 
-    async fn walk(&self, mut url: Url) -> Result<Vec<String>> {
+    async fn walk(&self, mut url: Url, first_only: bool) -> Result<Vec<String>> {
         // See: https://docs.aws.amazon.com/AmazonS3/latest/API/API_ListObjectsV2.html
 
         debug_assert!(
@@ -784,6 +784,11 @@ impl StorageBackend for S3StorageBackend {
             pairs.append_pair("list-type", "2");
             // Only return objects with this prefix
             pairs.append_pair("prefix", &prefix);
+
+            // Return at most one key if we're only retrieving the first entry
+            if first_only {
+                pairs.append_pair("max-keys", "1");
+            }
         }
 
         let date = Utc::now();
@@ -840,7 +845,7 @@ impl StorageBackend for S3StorageBackend {
             }));
 
             token = results.token.unwrap_or_default();
-            if token.is_empty() {
+            if first_only || token.is_empty() {
                 break;
             }
         }

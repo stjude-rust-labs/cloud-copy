@@ -209,9 +209,9 @@ impl StorageBackend for GenericStorageBackend {
         Ok(response)
     }
 
-    async fn walk(&self, _: Url) -> Result<Vec<String>> {
+    async fn walk(&self, _: Url, _: bool) -> Result<Vec<String>> {
         // The generic backend treats all URLs as files.
-        Ok(Vec::default())
+        Ok(Default::default())
     }
 
     async fn new_upload(&self, _: Url, _: Option<String>) -> Result<Self::Upload> {

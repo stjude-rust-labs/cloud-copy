@@ -107,7 +107,9 @@ pub trait StorageBackend {
     /// Returns a list of relative paths from the given URL.
     ///
     /// If the given storage URL is not a directory, an empty list is returned.
-    fn walk(&self, url: Url) -> impl Future<Output = Result<Vec<String>>> + Send;
+    ///
+    /// If `first_only` is true, only the first entry is returned.
+    fn walk(&self, url: Url, first_only: bool) -> impl Future<Output = Result<Vec<String>>> + Send;
 
     /// Creates a new upload.
     ///

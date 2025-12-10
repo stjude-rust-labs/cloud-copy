@@ -670,7 +670,7 @@ impl StorageBackend for GoogleStorageBackend {
         Ok(response)
     }
 
-    async fn walk(&self, mut url: Url) -> Result<Vec<String>> {
+    async fn walk(&self, mut url: Url, first_only: bool) -> Result<Vec<String>> {
         // See: https://cloud.google.com/storage/docs/xml-api/get-bucket-list
 
         debug_assert!(
@@ -700,6 +700,11 @@ impl StorageBackend for GoogleStorageBackend {
             pairs.append_pair("list-type", "2");
             // Only return objects with this prefix
             pairs.append_pair("prefix", &prefix);
+
+            // Return at most one key if we're only retrieving the first entry
+            if first_only {
+                pairs.append_pair("max-keys", "1");
+            }
         }
 
         let date = Utc::now();
@@ -759,7 +764,7 @@ impl StorageBackend for GoogleStorageBackend {
             }));
 
             token = results.token.unwrap_or_default();
-            if token.is_empty() {
+            if first_only || token.is_empty() {
                 break;
             }
         }
