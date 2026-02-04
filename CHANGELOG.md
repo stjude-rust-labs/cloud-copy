@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## Unreleased
 
+#### Fixed
+
+* Download of a directory that ends with a trailing slash may lead to
+  improperly formatted entry URLs ([#31](https://github.com/stjude-rust-labs/cloud-copy/pull/31)).
+
+#### Changed
+
+* Updated dependencies to latest ([#31](https://github.com/stjude-rust-labs/cloud-copy/pull/31)).
+
 ## 0.6.0 - 01-12-2026
 
 #### Added
