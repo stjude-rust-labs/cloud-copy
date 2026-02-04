@@ -566,6 +566,7 @@ where
                 // Adjust source and destination based on the provided relative URL path
                 {
                     let mut segments = source.path_segments_mut().expect("URL should have a path");
+                    segments.pop_if_empty();
                     for segment in path.split('/') {
                         segments.push(segment);
                         destination.push(segment);
