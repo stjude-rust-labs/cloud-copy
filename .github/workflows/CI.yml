@@ -55,7 +55,7 @@ jobs:
           docker logs $container
       - name: Start Azurite (Azure Storage)
         run: |
-          container=$(docker create -p 10000:10000 mcr.microsoft.com/azure-storage/azurite azurite -l /data --blobHost 0.0.0.0 --loose)
+          container=$(docker create -p 10000:10000 mcr.microsoft.com/azure-storage/azurite azurite -l /data --blobHost 0.0.0.0 --loose --skipApiVersionCheck)
           docker start $container
           sleep 5
           docker logs $container

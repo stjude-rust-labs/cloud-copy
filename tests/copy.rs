@@ -428,7 +428,19 @@ async fn roundtrip_directory() -> Result<()> {
     let config = config(true);
     let client = HttpClient::default();
     let cancel = CancellationToken::new();
-    for url in urls(&test) {
+
+    // Do a test for each URL with and without a trailing slash
+    for url in urls(&test)
+        .into_iter()
+        .chain(urls(&test).into_iter().map(|mut u| {
+            {
+                let mut segments = u.path_segments_mut().unwrap();
+                segments.pop_if_empty();
+                segments.push("");
+            }
+            u
+        }))
+    {
         // Copy the local directory to the cloud
         cloud_copy::copy(
             config.clone(),
