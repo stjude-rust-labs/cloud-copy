@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## Unreleased
 
+## 0.7.0 - 02-04-2026
+
 #### Fixed
 
 * Download of a directory that ends with a trailing slash may lead to
