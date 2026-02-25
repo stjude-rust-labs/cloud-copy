@@ -605,17 +605,14 @@ impl Config {
 
     /// Gets the parallelism supported for uploads and downloads.
     ///
-    /// For uploads, this is the number of blocks that may be concurrently
-    /// transferred for a single file.
-    ///
-    /// For downloads, this is the number of files that may be concurrently
-    /// downloaded.
+    /// This is the number of blocks that may be concurrently transferred for a
+    /// single file.
     ///
     /// Defaults to the host's available parallelism (or 1 if it cannot be
-    /// determined).
+    /// determined) and multiplied by 2.
     pub fn parallelism(&self) -> usize {
         self.parallelism
-            .unwrap_or_else(|| available_parallelism().map(NonZero::get).unwrap_or(1))
+            .unwrap_or_else(|| available_parallelism().map(NonZero::get).unwrap_or(1) * 2)
     }
 
     /// Sets the parallelism supported for uploads and downloads.

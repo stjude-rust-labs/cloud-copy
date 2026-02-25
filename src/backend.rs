@@ -95,11 +95,12 @@ pub trait StorageBackend {
     ///
     /// Returns an error if the request was not successful or if the etag did
     /// not match (condition not met).
-    fn get_at_offset(
+    fn get_range(
         &self,
         url: Url,
         etag: &str,
-        offset: u64,
+        start: u64,
+        end: Option<u64>,
     ) -> impl Future<Output = Result<Response>> + Send;
 
     /// Walks a given storage URL as if it were a directory.

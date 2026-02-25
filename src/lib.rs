@@ -19,6 +19,7 @@
 
 use std::borrow::Cow;
 use std::fmt;
+use std::io::ErrorKind;
 use std::ops::Deref;
 use std::path::Path;
 use std::path::PathBuf;
@@ -71,6 +72,7 @@ mod config;
 mod generator;
 mod pool;
 mod streams;
+mod sys;
 mod transfer;
 
 pub use backend::azure::AzureError;
@@ -501,6 +503,7 @@ impl Error {
             {
                 RetryError::transient(self)
             }
+            Error::Io(e) if e.kind() == ErrorKind::StorageFull => RetryError::Permanent(self),
             Error::Io(_) | Error::Reqwest(_) | Error::Middleware(_) => RetryError::transient(self),
             _ => RetryError::permanent(self),
         }

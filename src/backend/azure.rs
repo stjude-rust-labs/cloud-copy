@@ -622,15 +622,25 @@ impl StorageBackend for AzureBlobStorageBackend {
         Ok(response)
     }
 
-    async fn get_at_offset(&self, url: Url, etag: &str, offset: u64) -> Result<Response> {
+    async fn get_range(
+        &self,
+        url: Url,
+        etag: &str,
+        start: u64,
+        end: Option<u64>,
+    ) -> Result<Response> {
         debug_assert!(
             Self::is_supported_url(&self.config, &url),
             "{url} is not a supported Azure URL",
             url = url.as_str()
         );
 
+        let range = end
+            .map(|end| format!("bytes={start}-{end}"))
+            .unwrap_or_else(|| format!("bytes={start}-"));
+
         debug!(
-            "sending GET request at offset {offset} for `{url}`",
+            "sending GET request with range `{range}` for `{url}`",
             url = url.display(),
         );
 
@@ -639,7 +649,7 @@ impl StorageBackend for AzureBlobStorageBackend {
             .get(url)
             .header(header::USER_AGENT, USER_AGENT)
             .header(header::DATE, Utc::now().to_http_date())
-            .header(header::RANGE, format!("bytes={offset}-"))
+            .header(header::RANGE, range)
             .header(header::IF_MATCH, etag)
             .header(AZURE_VERSION_HEADER, AZURE_STORAGE_VERSION)
             .build()?;

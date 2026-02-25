@@ -3,13 +3,16 @@
 use std::io::IsTerminal;
 use std::io::stderr;
 use std::path::PathBuf;
+use std::str::FromStr;
 
 use anyhow::Context;
 use anyhow::Result;
+use anyhow::bail;
 use byte_unit::Byte;
 use byte_unit::UnitType;
 use chrono::Utc;
 use clap::Parser;
+use clap::ValueEnum;
 use clap_verbosity_flag::Verbosity;
 use clap_verbosity_flag::WarnLevel;
 use cloud_copy::AzureConfig;
@@ -29,11 +32,47 @@ use secrecy::SecretString;
 use tokio::pin;
 use tokio::sync::broadcast;
 use tokio_util::sync::CancellationToken;
+use tracing::level_filters::LevelFilter;
 use tracing_indicatif::IndicatifLayer;
 use tracing_subscriber::EnvFilter;
 use tracing_subscriber::layer::SubscriberExt;
 
 git_testament!(TESTAMENT);
+
+/// Represents the supported output color modes.
+#[derive(Debug, Default, Clone, ValueEnum, Copy, PartialEq, Eq, Hash)]
+pub enum ColorMode {
+    /// Automatically colorize output depending on output device.
+    #[default]
+    Auto,
+    /// Always colorize output.
+    Always,
+    /// Never colorize output.
+    Never,
+}
+
+impl FromStr for ColorMode {
+    type Err = anyhow::Error;
+
+    fn from_str(s: &str) -> Result<Self> {
+        match s {
+            "auto" => Ok(Self::Auto),
+            "always" => Ok(Self::Always),
+            "never" => Ok(Self::Never),
+            _ => bail!("invalid color mode `{s}`"),
+        }
+    }
+}
+
+impl std::fmt::Display for ColorMode {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Auto => write!(f, "auto"),
+            Self::Always => write!(f, "always"),
+            Self::Never => write!(f, "never"),
+        }
+    }
+}
 
 /// A utility for transferring files to and from cloud storage services.
 #[derive(Parser, Debug)]
@@ -71,7 +110,7 @@ struct Args {
     block_size: Option<u64>,
 
     /// The parallelism level for network operations; defaults to the host's
-    /// available parallelism.
+    /// available parallelism multiplied by 2.
     #[clap(long, value_name = "NUM")]
     parallelism: Option<usize>,
 
@@ -128,6 +167,10 @@ struct Args {
     /// The verbosity level.
     #[command(flatten)]
     verbosity: Verbosity<WarnLevel>,
+
+    /// Controls output colorization.
+    #[arg(long, default_value = "auto", global = true)]
+    color: ColorMode,
 }
 
 impl Args {
@@ -182,37 +225,53 @@ impl Args {
 /// Runs the application.
 async fn run(cancel: CancellationToken) -> Result<()> {
     let args = Args::parse();
-    match std::env::var("RUST_LOG") {
-        Ok(_) => {
-            let indicatif_layer = IndicatifLayer::new();
 
-            let subscriber = tracing_subscriber::fmt::Subscriber::builder()
-                .with_env_filter(EnvFilter::from_default_env())
-                .with_ansi(stderr().is_terminal())
-                .with_writer(indicatif_layer.get_stderr_writer())
-                .finish()
-                .with(indicatif_layer);
+    let colorize = match args.color {
+        ColorMode::Auto => stderr().is_terminal(),
+        ColorMode::Always => true,
+        ColorMode::Never => false,
+    };
 
-            tracing::subscriber::set_global_default(subscriber)?;
+    // Try to get a default environment filter via `RUST_LOG`
+    let env_filter = match EnvFilter::try_from_default_env()
+        .context("invalid `RUST_LOG` environment variable")
+    {
+        Ok(filter) => filter,
+        Err(e) => {
+            // If there was an error and the variable was set, then the error was due to
+            // parsing an invalid directive
+            if std::env::var("RUST_LOG").is_ok() {
+                return Err(e);
+            }
+
+            // Otherwise, use a default directive env filter that disables noisy hyper
+            // output
+            EnvFilter::builder()
+                .with_default_directive(LevelFilter::from(args.verbosity).into())
+                .from_env_lossy()
+                .add_directive("hyper_util=off".parse()?)
+                .add_directive("h2=off".parse()?)
         }
-        Err(_) => {
-            let indicatif_layer = IndicatifLayer::new();
+    };
 
-            let subscriber = tracing_subscriber::fmt::Subscriber::builder()
-                .with_max_level(args.verbosity)
-                .with_ansi(stderr().is_terminal())
-                .with_writer(indicatif_layer.get_stderr_writer())
-                .finish()
-                .with(indicatif_layer);
+    // Build the subscriber and set it as the global default
+    let indicatif_layer = IndicatifLayer::new();
+    let subscriber = tracing_subscriber::fmt::Subscriber::builder()
+        .with_env_filter(env_filter)
+        .with_writer(indicatif_layer.get_stderr_writer())
+        .with_ansi(colorize)
+        .finish()
+        .with(indicatif_layer);
 
-            tracing::subscriber::set_global_default(subscriber)?;
-        }
-    }
+    colored::control::set_override(colorize);
+
+    tracing::subscriber::set_global_default(subscriber)
+        .context("failed to set tracing subscriber")?;
 
     // Only handle transfer events if for a terminal to display the progress
     let (events_tx, events_rx) = broadcast::channel(1000);
     let c = cancel.clone();
-    let handler = tokio::spawn(async move { handle_events(events_rx, c).await });
+    let handler = tokio::spawn(async move { handle_events(events_rx, colorize, c).await });
 
     let start = Utc::now();
 
