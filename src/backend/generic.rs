@@ -25,6 +25,7 @@ use crate::USER_AGENT;
 use crate::UrlExt;
 use crate::backend::StorageBackend;
 use crate::backend::Upload;
+use crate::backend::format_range_header;
 
 /// Helper trait for converting responses into `Error`.
 trait IntoError {
@@ -183,11 +184,9 @@ impl StorageBackend for GenericStorageBackend {
         url: Url,
         etag: &str,
         start: u64,
-        end: Option<u64>,
+        exclusive_end: Option<u64>,
     ) -> Result<Response> {
-        let range = end
-            .map(|end| format!("bytes={start}-{end}"))
-            .unwrap_or_else(|| format!("bytes={start}-"));
+        let range = format_range_header(start, exclusive_end);
 
         debug!(
             "sending GET request with range `{range}` for `{url}`",

@@ -2,7 +2,6 @@
 
 use std::fs::File;
 use std::io::Error;
-use std::io::ErrorKind;
 use std::io::Result;
 use std::os::windows::io::AsRawHandle;
 
@@ -16,8 +15,8 @@ use windows::Win32::System::IO::OVERLAPPED_0_0;
 pub fn write_at(file: &File, buffer: &[u8], offset: u64) -> Result<usize> {
     let mut written = 0;
     while written < buffer.len() {
-        let offset =
-            offset + u64::try_from(written).map_err(|e| Error::new(ErrorKind::Other, e))?;
+        let offset = offset + u64::try_from(written).map_err(Error::other)?;
+
         let mut overlapped = OVERLAPPED {
             Anonymous: OVERLAPPED_0 {
                 Anonymous: OVERLAPPED_0_0 {
@@ -29,17 +28,14 @@ pub fn write_at(file: &File, buffer: &[u8], offset: u64) -> Result<usize> {
         };
 
         unsafe {
+            let mut bytes_written = 0;
             match WriteFile(
                 HANDLE(file.as_raw_handle()),
                 Some(&buffer[written..]),
-                None,
+                Some(&mut bytes_written),
                 Some(&mut overlapped),
             ) {
-                Ok(()) => {
-                    written += ((((overlapped.InternalHigh as u64) << 32)
-                        | overlapped.Internal as u64)
-                        - offset) as usize;
-                }
+                Ok(()) => written += bytes_written as usize,
                 Err(e) => return Err(e.into()),
             }
         }

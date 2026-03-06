@@ -34,6 +34,7 @@ use crate::backend::StorageBackend;
 use crate::backend::Upload;
 use crate::backend::auth::s3::RequestSigner;
 use crate::backend::auth::s3::SignatureProvider;
+use crate::backend::format_range_header;
 use crate::sha256_hex_string;
 use crate::streams::ByteStream;
 use crate::streams::TransferStream;
@@ -705,7 +706,7 @@ impl StorageBackend for S3StorageBackend {
         url: Url,
         etag: &str,
         start: u64,
-        end: Option<u64>,
+        exclusive_end: Option<u64>,
     ) -> Result<Response> {
         debug_assert!(
             Self::is_supported_url(&self.config, &url),
@@ -713,9 +714,7 @@ impl StorageBackend for S3StorageBackend {
             url = url.as_str()
         );
 
-        let range = end
-            .map(|end| format!("bytes={start}-{end}"))
-            .unwrap_or_else(|| format!("bytes={start}-"));
+        let range = format_range_header(start, exclusive_end);
 
         debug!(
             "sending GET request with range `{range}` for `{url}`",

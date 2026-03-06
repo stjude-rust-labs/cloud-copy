@@ -425,14 +425,11 @@ impl ConfigBuilder {
 
     /// Sets the parallelism supported for uploads and downloads.
     ///
-    /// For uploads, this is the number of blocks that may be concurrently
-    /// transferred for a single file.
-    ///
-    /// For downloads, this is the number of files that may be concurrently
-    /// downloaded.
+    /// This is the maximum number of concurrent transfer streams that may be
+    /// attempted at one time.
     ///
     /// Defaults to the host's available parallelism (or 1 if it cannot be
-    /// determined).
+    /// determined) multiplied by 2.
     pub fn with_parallelism(mut self, parallelism: usize) -> Self {
         self.parallelism = Some(parallelism);
         self
@@ -440,16 +437,13 @@ impl ConfigBuilder {
 
     /// Sets the parallelism supported for uploads and downloads.
     ///
-    /// For uploads, this is the number of blocks that may be concurrently
-    /// transferred for a single file.
-    ///
-    /// For downloads, this is the number of files that may be concurrently
-    /// downloaded.
+    /// This is the maximum number of concurrent transfer streams that may be
+    /// attempted at one time.
     ///
     /// If `None`, the default parallelism is used.
     ///
     /// Defaults to the host's available parallelism (or 1 if it cannot be
-    /// determined).
+    /// determined) multiplied by 2.
     pub fn with_maybe_parallelism(mut self, parallelism: Option<usize>) -> Self {
         self.parallelism = parallelism;
         self

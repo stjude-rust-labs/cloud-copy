@@ -47,6 +47,9 @@ use crate::pool::BufferGuard;
 use crate::pool::BufferPool;
 use crate::streams::TransferStream;
 
+/// The supported `accept-range` unit.
+const SUPPORTED_RANGE_UNIT: &str = "bytes";
+
 /// Gets the next transfer id.
 fn next_id() -> u64 {
     /// The next transfer identifier.
@@ -161,7 +164,7 @@ where
         let accept_ranges = response
             .headers()
             .get(header::ACCEPT_RANGES)
-            .map(|v| v.to_str().ok() == Some("bytes"))
+            .map(|v| v.to_str().ok() == Some(SUPPORTED_RANGE_UNIT))
             .unwrap_or(false);
 
         let download_source = source.clone();
@@ -181,12 +184,14 @@ where
                 .into_temp_path();
 
             // Check to see if we can transfer the file in blocks; this requires a known
-            // file size, a strong etag, the server to accept ranged requests, and that
-            // we're not using a cache as our cache implementation does not support ranged
-            // requests.
+            // file size (> 0), a strong etag, the server to accept ranged requests, and
+            // that we're not using a cache as our cache implementation does not
+            // support ranged requests.
             match (accept_ranges, content_length, etag) {
                 (true, Some(content_length), Some(etag))
-                    if self.backend.cache().is_none() && !etag.starts_with("W/") =>
+                    if content_length > 0
+                        && self.backend.cache().is_none()
+                        && !etag.starts_with("W/") =>
                 {
                     // Download the file in blocks
                     self.download_in_blocks(
@@ -279,7 +284,7 @@ where
             );
         } else {
             debug!(
-                "file `{source}` will be downloaded with resumable retries",
+                "file `{source}` will be downloaded with retries starting at the beginning",
                 source = info.source.display()
             );
         }

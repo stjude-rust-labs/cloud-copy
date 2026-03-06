@@ -19,6 +19,17 @@ pub(crate) mod generic;
 pub(crate) mod google;
 pub(crate) mod s3;
 
+/// Formats a range header with an optional exclusive end.
+///
+/// # Panics
+///
+/// Panics if `exclusive_end` is `Some(0)`.
+fn format_range_header(start: u64, exclusive_end: Option<u64>) -> String {
+    exclusive_end
+        .map(|end| format!("bytes={start}-{end}", end = end.strict_sub(1)))
+        .unwrap_or_else(|| format!("bytes={start}-"))
+}
+
 /// Represents an abstract file upload.
 pub trait Upload: Send + Sync + 'static {
     /// Represents information about a part that was uploaded.
@@ -88,7 +99,9 @@ pub trait StorageBackend {
     fn get(&self, url: Url) -> impl Future<Output = Result<Response>> + Send;
 
     /// Sends a conditional ranged GET request for the given URL at the given
-    /// start offset.
+    /// start offset until the optional exclusive end.
+    ///
+    /// If the exclusive end is specified, it cannot be zero.
     ///
     /// Returns `Ok(_)` if the response returns a 200 (full content) or 206
     /// (partial content).
@@ -100,7 +113,7 @@ pub trait StorageBackend {
         url: Url,
         etag: &str,
         start: u64,
-        end: Option<u64>,
+        exclusive_end: Option<u64>,
     ) -> impl Future<Output = Result<Response>> + Send;
 
     /// Walks a given storage URL as if it were a directory.

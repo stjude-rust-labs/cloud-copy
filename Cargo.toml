@@ -7,7 +7,7 @@ edition = "2024"
 authors = ["St. Jude Rust Labs"]
 homepage = "https://github.com/stjude-rust-labs/cloud-copy"
 repository = "https://github.com/stjude-rust-labs/cloud-copy"
-rust-version = "1.89.0"
+rust-version = "1.91.0"
 
 [package.metadata.docs.rs]
 all-features = true
