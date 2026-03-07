@@ -25,6 +25,8 @@ use tokio::io::AsyncSeekExt;
 use tokio::io::AsyncWriteExt;
 use tokio::io::BufWriter;
 use tokio::select;
+use tokio::sync::Semaphore;
+use tokio::task::JoinSet;
 use tokio::task::spawn_blocking;
 use tokio_retry2::Retry;
 use tokio_util::io::StreamReader;
@@ -116,6 +118,7 @@ where
         self: &Arc<Self>,
         source: Url,
         destination: &Path,
+        permits: Arc<Semaphore>,
         cancel: CancellationToken,
     ) -> Result<()> {
         info!(
@@ -131,7 +134,10 @@ where
                 select! {
                     biased;
                     _ = cancel.cancelled() => Err(Error::Canceled),
-                    r = self.backend.head(source.clone(), true) => r
+                    r = async {
+                        let _permit = permits.acquire().await.expect("semaphore was closed");
+                        self.backend.head(source.clone(), true).await
+                    } => r
                 }
                 .map_err(Error::into_retry_error)
             },
@@ -202,6 +208,7 @@ where
                         },
                         content_length,
                         etag,
+                        &permits,
                         cancel.clone(),
                     )
                     .await?;
@@ -217,6 +224,7 @@ where
                         content_length,
                         etag,
                         accept_ranges,
+                        &permits,
                         cancel.clone(),
                     )
                     .await?;
@@ -275,8 +283,12 @@ where
         content_length: Option<u64>,
         etag: Option<&str>,
         accept_ranges: bool,
+        permits: &Arc<Semaphore>,
         cancel: CancellationToken,
     ) -> Result<()> {
+        // Take a permit now for the entire download
+        let _permit = permits.acquire().await.expect("semaphore was closed");
+
         if accept_ranges {
             debug!(
                 "file `{source}` will be downloaded with resumable retries",
@@ -455,6 +467,7 @@ where
         info: DownloadInfo<'_>,
         content_length: u64,
         etag: &str,
+        permits: &Arc<Semaphore>,
         cancel: CancellationToken,
     ) -> Result<()> {
         // Calculate the block size and the number of blocks to download
@@ -481,6 +494,7 @@ where
                 let file = file.clone();
                 let source = info.source.clone();
                 let etag = etag.clone();
+                let permits = permits.clone();
                 let cancel = cancel.clone();
 
                 tokio::spawn(async move {
@@ -499,6 +513,7 @@ where
                                         range: (block * block_size)
                                             ..((block + 1) * block_size).min(content_length),
                                     },
+                                    &permits,
                                     cancel.clone(),
                                 )
                                 .map_err(Error::into_retry_error)
@@ -527,8 +542,12 @@ where
         &self,
         source: Url,
         mut info: BlockDownloadInfo,
+        permits: &Arc<Semaphore>,
         cancel: CancellationToken,
     ) -> Result<()> {
+        // Acquire a permit for downloading the block
+        let _permit = permits.acquire().await.expect("semaphore was closed");
+
         let id = info.id;
         let block = info.block;
         let start = info.range.start;
@@ -757,12 +776,11 @@ where
 {
     /// Constructs a new file transfer with the given storage backend.
     pub fn new(backend: B, cancel: CancellationToken) -> Self {
-        debug!(
-            "using a maximum of {parallelism} parallel requests for file transfers",
-            parallelism = backend.config().parallelism()
-        );
+        let parallelism = backend.config().parallelism();
 
-        let pool = BufferPool::new(backend.config().parallelism());
+        debug!("using a maximum of {parallelism} parallel requests for file transfers");
+
+        let pool = BufferPool::new(parallelism);
         Self {
             inner: Arc::new(FileTransferInner { backend, pool }),
             cancel,
@@ -800,32 +818,43 @@ where
             }
         }
 
+        let permits = Arc::new(Semaphore::new(self.inner.backend.config().parallelism()));
+        let mut set = JoinSet::new();
+
         // If there are no files relative to the given URL, download just the given URL
         if paths.is_empty() {
-            return self
-                .inner
-                .download(source, destination, self.cancel.clone())
-                .await;
+            let inner = self.inner.clone();
+            let destination = destination.to_path_buf();
+            let permits = permits.clone();
+            let cancel = self.cancel.clone();
+            set.spawn(async move { inner.download(source, &destination, permits, cancel).await });
+        } else {
+            // Otherwise, download each file in turn
+            for path in paths {
+                let inner = self.inner.clone();
+                let mut source = source.clone();
+                let mut destination = destination.to_path_buf();
+                let permits = permits.clone();
+                let cancel = self.cancel.clone();
+
+                // Adjust source and destination based on the provided relative URL path
+                {
+                    let mut segments = source.path_segments_mut().expect("URL should have a path");
+                    segments.pop_if_empty();
+                    for segment in path.split('/') {
+                        segments.push(segment);
+                        destination.push(segment);
+                    }
+                }
+
+                set.spawn(
+                    async move { inner.download(source, &destination, permits, cancel).await },
+                );
+            }
         }
 
-        // Otherwise, download each file in turn
-        for path in paths {
-            let mut source = source.clone();
-            let mut destination = destination.to_path_buf();
-
-            // Adjust source and destination based on the provided relative URL path
-            {
-                let mut segments = source.path_segments_mut().expect("URL should have a path");
-                segments.pop_if_empty();
-                for segment in path.split('/') {
-                    segments.push(segment);
-                    destination.push(segment);
-                }
-            }
-
-            self.inner
-                .download(source, &destination, self.cancel.clone())
-                .await?;
+        while let Some(r) = set.join_next().await.map(|r| r.expect("task panicked")) {
+            r?;
         }
 
         Ok(())
@@ -881,7 +910,7 @@ where
             .backend
             .config()
             .hash_algorithm()
-            .calculate_content_digest(source)
+            .calculate_content_digest(source, &self.cancel)
             .await?;
 
         // Create the upload (retryable)

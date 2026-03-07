@@ -415,6 +415,9 @@ pub enum Error {
     /// The specified path is invalid.
     #[error("the specified path cannot be a root directory or empty")]
     InvalidPath,
+    /// The specified parallelism isn't valid.
+    #[error("the specified parallelism cannot be zero")]
+    InvalidParallelism,
     /// The remote content was modified during a download.
     #[error("the remote content was modified during the download")]
     RemoteContentModified,
@@ -712,6 +715,10 @@ pub async fn copy(
     cancel: CancellationToken,
     events: Option<broadcast::Sender<TransferEvent>>,
 ) -> Result<()> {
+    if config.parallelism() == 0 {
+        return Err(Error::InvalidParallelism);
+    }
+
     let source = source.into();
     let destination = destination.into();
 

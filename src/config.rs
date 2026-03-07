@@ -15,9 +15,12 @@ use base64::prelude::BASE64_STANDARD;
 use secrecy::SecretString;
 use serde::Deserialize;
 use sha2::Digest;
+use tokio::select;
 use tokio::task::spawn_blocking;
 use tokio_retry2::strategy::ExponentialFactorBackoff;
 use tokio_retry2::strategy::MaxInterval;
+use tokio_util::sync::CancellationToken;
+use tracing::info;
 
 /// The default number of retries for network operations.
 const DEFAULT_RETRIES: usize = 5;
@@ -43,12 +46,23 @@ pub enum HashAlgorithm {
 impl HashAlgorithm {
     /// Calculates a `Content-Digest` header value for the contents of the file
     /// at the given path.
-    pub async fn calculate_content_digest(&self, path: &Path) -> crate::Result<Option<String>> {
+    ///
+    /// Returns `None` if content digests are not being calculated for uploads.
+    pub async fn calculate_content_digest(
+        &self,
+        path: &Path,
+        cancel: &CancellationToken,
+    ) -> crate::Result<Option<String>> {
+        info!(
+            "calculating content digest for file `{path}`",
+            path = path.display()
+        );
+
         match self {
             Self::None => Ok(None),
             Self::Sha256 => {
                 let path = path.to_path_buf();
-                spawn_blocking(move || {
+                let fut = spawn_blocking(move || {
                     let mut hasher = sha2::Sha256::new();
                     let mut reader = BufReader::new(File::open(path)?);
                     std::io::copy(&mut reader, &mut hasher)?;
@@ -57,13 +71,16 @@ impl HashAlgorithm {
                         "sha-256=:{encoded}:",
                         encoded = BASE64_STANDARD.encode(digest)
                     )))
-                })
-                .await
-                .expect("failed to join task")
+                });
+
+                select! {
+                    _ = cancel.cancelled() => Err(crate::Error::Canceled),
+                    r = fut => r.expect("failed to join task")
+                }
             }
             Self::Blake3 => {
                 let path = path.to_path_buf();
-                spawn_blocking(move || {
+                let fut = spawn_blocking(move || {
                     let mut hasher = blake3::Hasher::new();
                     hasher.update_mmap_rayon(&path)?;
                     let digest = hasher.finalize();
@@ -71,9 +88,12 @@ impl HashAlgorithm {
                         "blake3=:{encoded}:",
                         encoded = BASE64_STANDARD.encode(digest.as_bytes())
                     )))
-                })
-                .await
-                .expect("failed to join task")
+                });
+
+                select! {
+                    _ = cancel.cancelled() => Err(crate::Error::Canceled),
+                    r = fut => r.expect("failed to join task")
+                }
             }
         }
     }
