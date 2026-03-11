@@ -25,6 +25,7 @@ use crate::USER_AGENT;
 use crate::UrlExt;
 use crate::backend::StorageBackend;
 use crate::backend::Upload;
+use crate::backend::format_range_header;
 
 /// Helper trait for converting responses into `Error`.
 trait IntoError {
@@ -178,9 +179,17 @@ impl StorageBackend for GenericStorageBackend {
         Ok(response)
     }
 
-    async fn get_at_offset(&self, url: Url, etag: &str, offset: u64) -> Result<Response> {
+    async fn get_range(
+        &self,
+        url: Url,
+        etag: &str,
+        start: u64,
+        exclusive_end: Option<u64>,
+    ) -> Result<Response> {
+        let range = format_range_header(start, exclusive_end);
+
         debug!(
-            "sending GET request at offset {offset} for `{url}`",
+            "sending GET request with range `{range}` for `{url}`",
             url = url.display(),
         );
 
@@ -189,7 +198,7 @@ impl StorageBackend for GenericStorageBackend {
             .get(url)
             .header(header::USER_AGENT, USER_AGENT)
             .header(header::DATE, Utc::now().to_http_date())
-            .header(header::RANGE, format!("bytes={offset}-"))
+            .header(header::RANGE, range)
             .header(header::IF_MATCH, etag)
             .send()
             .await?;

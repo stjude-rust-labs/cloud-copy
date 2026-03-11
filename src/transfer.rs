@@ -1,6 +1,8 @@
 //! Implementation of file transfers.
 
+use std::fs::File;
 use std::io::SeekFrom;
+use std::ops::Range;
 use std::path::Path;
 use std::sync::Arc;
 use std::sync::atomic::AtomicU64;
@@ -9,6 +11,7 @@ use std::sync::atomic::Ordering;
 use bytes::Bytes;
 use futures::FutureExt;
 use futures::StreamExt;
+use futures::TryFutureExt;
 use futures::TryStreamExt;
 use futures::stream;
 use http_cache_stream_reqwest::CacheStorage;
@@ -17,10 +20,14 @@ use reqwest::StatusCode;
 use reqwest::header;
 use tempfile::NamedTempFile;
 use tokio::fs;
+use tokio::io::AsyncReadExt;
 use tokio::io::AsyncSeekExt;
 use tokio::io::AsyncWriteExt;
 use tokio::io::BufWriter;
 use tokio::select;
+use tokio::sync::Semaphore;
+use tokio::task::JoinSet;
+use tokio::task::spawn_blocking;
 use tokio_retry2::Retry;
 use tokio_util::io::StreamReader;
 use tokio_util::sync::CancellationToken;
@@ -38,8 +45,12 @@ use crate::UrlExt;
 use crate::backend::StorageBackend;
 use crate::backend::Upload;
 use crate::notify_retry;
+use crate::pool::BufferGuard;
 use crate::pool::BufferPool;
 use crate::streams::TransferStream;
+
+/// The supported `accept-range` unit.
+const SUPPORTED_RANGE_UNIT: &str = "bytes";
 
 /// Gets the next transfer id.
 fn next_id() -> u64 {
@@ -49,6 +60,32 @@ fn next_id() -> u64 {
     static NEXT_ID: AtomicU64 = AtomicU64::new(0);
 
     NEXT_ID.fetch_add(1, Ordering::SeqCst)
+}
+
+/// Represents information about a file download.
+struct DownloadInfo<'a> {
+    /// The file transfer id.
+    id: u64,
+    /// The URL of the file being downloaded.
+    source: Url,
+    /// The destination path of the file.
+    destination: &'a Path,
+}
+
+/// Represents information about a block being downloaded.
+struct BlockDownloadInfo {
+    /// The file transfer id.
+    id: u64,
+    /// The ETAG of the resource being downloaded.
+    etag: Arc<String>,
+    /// The file being written.
+    file: Arc<File>,
+    /// The block number being downloaded.
+    block: u64,
+    /// The buffer to use to read and write the block.
+    buffer: BufferGuard,
+    /// The range in the file being downloaded.
+    range: Range<u64>,
 }
 
 /// Represents information about a file being uploaded.
@@ -78,9 +115,10 @@ where
 {
     /// Downloads a file to the given destination path.
     async fn download(
-        &self,
+        self: &Arc<Self>,
         source: Url,
         destination: &Path,
+        permits: Arc<Semaphore>,
         cancel: CancellationToken,
     ) -> Result<()> {
         info!(
@@ -96,7 +134,10 @@ where
                 select! {
                     biased;
                     _ = cancel.cancelled() => Err(Error::Canceled),
-                    r = self.backend.head(source.clone(), true) => r
+                    r = async {
+                        let _permit = permits.acquire().await.expect("semaphore was closed");
+                        self.backend.head(source.clone(), true).await
+                    } => r
                 }
                 .map_err(Error::into_retry_error)
             },
@@ -125,6 +166,13 @@ where
             .get(header::CONTENT_LENGTH)
             .and_then(|v| v.to_str().ok()?.parse().ok());
 
+        // Check to see if ranged requests are accepted
+        let accept_ranges = response
+            .headers()
+            .get(header::ACCEPT_RANGES)
+            .map(|v| v.to_str().ok() == Some(SUPPORTED_RANGE_UNIT))
+            .unwrap_or(false);
+
         let download_source = source.clone();
         let transfer = async {
             // Start by creating the destination's parent directory
@@ -141,16 +189,47 @@ where
                 .map_err(|error| Error::CreateTempFile { error })?
                 .into_temp_path();
 
-            // Download the file with resumable retries
-            self.download_with_resume(
-                id,
-                download_source,
-                &temp,
-                content_length,
-                etag,
-                cancel.clone(),
-            )
-            .await?;
+            // Check to see if we can transfer the file in blocks; this requires a known
+            // file size (> 0), a strong etag, the server to accept ranged requests, and
+            // that we're not using a cache as our cache implementation does not
+            // support ranged requests.
+            match (accept_ranges, content_length, etag) {
+                (true, Some(content_length), Some(etag))
+                    if content_length > 0
+                        && self.backend.cache().is_none()
+                        && !etag.starts_with("W/") =>
+                {
+                    // Download the file in blocks
+                    self.download_in_blocks(
+                        DownloadInfo {
+                            id,
+                            source: download_source,
+                            destination: &temp,
+                        },
+                        content_length,
+                        etag,
+                        &permits,
+                        cancel.clone(),
+                    )
+                    .await?;
+                }
+                _ => {
+                    // Download the file with resumable retries
+                    self.download_with_resume(
+                        DownloadInfo {
+                            id,
+                            source: download_source,
+                            destination: &temp,
+                        },
+                        content_length,
+                        etag,
+                        accept_ranges,
+                        &permits,
+                        cancel.clone(),
+                    )
+                    .await?;
+                }
+            }
 
             // Persist the temp file to the destination
             temp.persist_noclobber(destination)
@@ -192,32 +271,54 @@ where
     }
 
     /// Downloads a file with resuming retry.
+    ///
+    /// If the server supports ranged requests, a retry operation will resume
+    /// where it left off.
+    ///
+    /// If the server does not support ranged requests, a retry operation will
+    /// restart from the beginning.
     async fn download_with_resume(
         &self,
-        id: u64,
-        source: Url,
-        destination: &Path,
+        info: DownloadInfo<'_>,
         content_length: Option<u64>,
         etag: Option<&str>,
+        accept_ranges: bool,
+        permits: &Arc<Semaphore>,
         cancel: CancellationToken,
     ) -> Result<()> {
+        // Take a permit now for the entire download
+        let _permit = permits.acquire().await.expect("semaphore was closed");
+
+        if accept_ranges {
+            debug!(
+                "file `{source}` will be downloaded with resumable retries",
+                source = info.source.display()
+            );
+        } else {
+            debug!(
+                "file `{source}` will be downloaded with retries starting at the beginning",
+                source = info.source.display()
+            );
+        }
+
         let transfer = async {
             let offset = AtomicU64::new(0);
 
-            // Retry the download with resume
+            // Retry the download with resume (if server accepts ranged requests)
             Retry::spawn_notify(
                 self.backend.config().retry_durations(),
                 || async {
                     let mut current = offset.load(Ordering::SeqCst);
 
-                    let response = if current > 0
+                    let response = if accept_ranges
+                        && current > 0
                         && let Some(etag) = etag
                     {
                         self.backend
-                            .get_at_offset(source.clone(), etag, current)
+                            .get_range(info.source.clone(), etag, current, None)
                             .await?
                     } else {
-                        let response = self.backend.get(source.clone()).await?;
+                        let response = self.backend.get(info.source.clone()).await?;
 
                         // Check to see if we should link to the cache location
                         if self.backend.config().link_to_cache()
@@ -230,8 +331,8 @@ where
                             let path = cache.storage().body_path(digest);
                             if path.is_file() {
                                 // Remove the existing temp file and replace it with a hard link
-                                fs::remove_file(destination).await.ok();
-                                match fs::hard_link(&path, destination).await {
+                                fs::remove_file(info.destination).await.ok();
+                                match fs::hard_link(&path, info.destination).await {
                                     Ok(_) => {
                                         debug!(
                                             "created a hard link from cache location `{path}`",
@@ -253,15 +354,16 @@ where
                     };
 
                     // If the response is not partial, start from the beginning
-                    if current != 0
-                        && (etag.is_none() || response.status() != StatusCode::PARTIAL_CONTENT)
-                    {
-                        debug!(
-                            "resuming download of `{source}` from the beginning of the file",
-                            source = source.display()
-                        );
+                    if response.status() != StatusCode::PARTIAL_CONTENT {
+                        if current > 0 {
+                            debug!(
+                                "resuming download of `{source}` from the beginning",
+                                source = info.source.display()
+                            );
+                        }
+
                         current = 0;
-                    } else if response.status() == StatusCode::PARTIAL_CONTENT {
+                    } else {
                         // Ensure the response starts at the requested position
                         if !response
                             .headers()
@@ -275,13 +377,13 @@ where
 
                         debug!(
                             "resuming download of `{source}` from offset {current}",
-                            source = source.display()
+                            source = info.source.display()
                         );
                     }
 
                     let mut reader = StreamReader::new(TransferStream::new(
                         response.bytes_stream().map_err(std::io::Error::other),
-                        id,
+                        info.id,
                         0,
                         current,
                         self.backend.events().clone(),
@@ -291,7 +393,7 @@ where
                         .create(true)
                         .write(true)
                         .truncate(false)
-                        .open(destination)
+                        .open(info.destination)
                         .await
                         .map_err(|error| Error::CreateTempFile { error })?;
 
@@ -330,7 +432,7 @@ where
         if let Some(events) = self.backend.events() {
             events
                 .send(TransferEvent::BlockStarted {
-                    id,
+                    id: info.id,
                     block: 0,
                     size: content_length,
                 })
@@ -347,8 +449,172 @@ where
         if let Some(events) = self.backend.events() {
             events
                 .send(TransferEvent::BlockCompleted {
-                    id,
+                    id: info.id,
                     block: 0,
+                    failed: result.is_err(),
+                })
+                .ok();
+        }
+
+        result
+    }
+
+    /// Downloads a file in blocks using ranged GET requests.
+    ///
+    /// The blocks are downloaded in parallel and retried individually.
+    async fn download_in_blocks(
+        self: &Arc<Self>,
+        info: DownloadInfo<'_>,
+        content_length: u64,
+        etag: &str,
+        permits: &Arc<Semaphore>,
+        cancel: CancellationToken,
+    ) -> Result<()> {
+        // Calculate the block size and the number of blocks to download
+        let block_size = self.backend.block_size(content_length)?;
+        let num_blocks = content_length.div_ceil(block_size);
+
+        debug!(
+            "file `{source}` is {content_length} bytes and will be downloaded with {num_blocks} \
+             block(s) of size {block_size}",
+            source = info.source.display()
+        );
+
+        let file = std::fs::File::create(info.destination)
+            .map_err(|error| Error::CreateTempFile { error })?;
+
+        file.set_len(content_length).map_err(Error::from)?;
+
+        let etag = Arc::new(etag.to_string());
+        let file = Arc::new(file);
+        let mut stream = stream::iter(0..num_blocks)
+            .map(|block| {
+                let id = info.id;
+                let inner = self.clone();
+                let file = file.clone();
+                let source = info.source.clone();
+                let etag = etag.clone();
+                let permits = permits.clone();
+                let cancel = cancel.clone();
+
+                tokio::spawn(async move {
+                    Retry::spawn_notify(
+                        inner.backend.config().retry_durations(),
+                        || {
+                            inner
+                                .download_block(
+                                    source.clone(),
+                                    BlockDownloadInfo {
+                                        id,
+                                        etag: etag.clone(),
+                                        file: file.clone(),
+                                        block,
+                                        buffer: inner.pool.alloc(block_size as usize),
+                                        range: (block * block_size)
+                                            ..((block + 1) * block_size).min(content_length),
+                                    },
+                                    &permits,
+                                    cancel.clone(),
+                                )
+                                .map_err(Error::into_retry_error)
+                        },
+                        notify_retry,
+                    )
+                    .await
+                })
+                .map(|r| r.expect("task panicked"))
+            })
+            .buffer_unordered(self.backend.config().parallelism());
+
+        loop {
+            let result = stream.next().await;
+            match result {
+                Some(r) => r?,
+                None => break,
+            }
+        }
+
+        Ok(())
+    }
+
+    /// Downloads a block of a file using a ranged GET request.
+    async fn download_block(
+        &self,
+        source: Url,
+        mut info: BlockDownloadInfo,
+        permits: &Arc<Semaphore>,
+        cancel: CancellationToken,
+    ) -> Result<()> {
+        // Acquire a permit for downloading the block
+        let _permit = permits.acquire().await.expect("semaphore was closed");
+
+        let id = info.id;
+        let block = info.block;
+        let start = info.range.start;
+        let block_size = info.range.end - start;
+
+        let transfer = async {
+            let response = self
+                .backend
+                .get_range(
+                    source,
+                    info.etag.as_str(),
+                    info.range.start,
+                    Some(info.range.end),
+                )
+                .await?;
+
+            // We expect partial content, otherwise treat as remote content modified
+            if response.status() != StatusCode::PARTIAL_CONTENT {
+                return Err(Error::RemoteContentModified);
+            }
+
+            let mut reader = StreamReader::new(TransferStream::new(
+                response.bytes_stream().map_err(std::io::Error::other),
+                info.id,
+                info.block,
+                0,
+                self.backend.events().clone(),
+            ));
+
+            // Read the block into the provided buffer
+            reader
+                .read_exact(&mut info.buffer[0..block_size as usize])
+                .map_err(Error::from)
+                .await?;
+
+            // Write the block to the file
+            spawn_blocking(move || {
+                crate::sys::write_at(&info.file, &info.buffer[0..block_size as usize], start)
+                    .map_err(Error::from)
+            })
+            .await
+            .expect("failed to join blocking task")?;
+
+            Ok(())
+        };
+
+        if let Some(events) = self.backend.events() {
+            events
+                .send(TransferEvent::BlockStarted {
+                    id,
+                    block,
+                    size: Some(block_size),
+                })
+                .ok();
+        }
+
+        let result = select! {
+            biased;
+            _ = cancel.cancelled() => Err(Error::Canceled),
+            r = transfer => r,
+        };
+
+        if let Some(events) = self.backend.events() {
+            events
+                .send(TransferEvent::BlockCompleted {
+                    id,
+                    block,
                     failed: result.is_err(),
                 })
                 .ok();
@@ -510,7 +776,11 @@ where
 {
     /// Constructs a new file transfer with the given storage backend.
     pub fn new(backend: B, cancel: CancellationToken) -> Self {
-        let pool = BufferPool::new(backend.config().parallelism());
+        let parallelism = backend.config().parallelism();
+
+        debug!("using a maximum of {parallelism} parallel requests for file transfers");
+
+        let pool = BufferPool::new(parallelism);
         Self {
             inner: Arc::new(FileTransferInner { backend, pool }),
             cancel,
@@ -548,20 +818,24 @@ where
             }
         }
 
-        // If there are no files relative to the given URL, download the URL a single
-        // file
-        if paths.is_empty() {
-            return self
-                .inner
-                .download(source, destination, self.cancel.clone())
-                .await;
-        }
+        let permits = Arc::new(Semaphore::new(self.inner.backend.config().parallelism()));
+        let mut set = JoinSet::new();
 
-        // Otherwise, download each file in turn
-        let mut downloads = stream::iter(paths)
-            .map(move |path| {
+        // If there are no files relative to the given URL, download just the given URL
+        if paths.is_empty() {
+            let inner = self.inner.clone();
+            let destination = destination.to_path_buf();
+            let permits = permits.clone();
+            let cancel = self.cancel.clone();
+            set.spawn(async move { inner.download(source, &destination, permits, cancel).await });
+        } else {
+            // Otherwise, download each file in turn
+            for path in paths {
+                let inner = self.inner.clone();
                 let mut source = source.clone();
                 let mut destination = destination.to_path_buf();
+                let permits = permits.clone();
+                let cancel = self.cancel.clone();
 
                 // Adjust source and destination based on the provided relative URL path
                 {
@@ -573,19 +847,14 @@ where
                     }
                 }
 
-                let inner = self.inner.clone();
-                let cancel = self.cancel.clone();
-                tokio::spawn(async move { inner.download(source, &destination, cancel).await })
-                    .map(|r| r.expect("task panicked"))
-            })
-            .buffer_unordered(self.inner.backend.config().parallelism());
-
-        loop {
-            let result = downloads.next().await;
-            match result {
-                Some(r) => r?,
-                None => break,
+                set.spawn(
+                    async move { inner.download(source, &destination, permits, cancel).await },
+                );
             }
+        }
+
+        while let Some(r) = set.join_next().await.map(|r| r.expect("task panicked")) {
+            r?;
         }
 
         Ok(())
@@ -641,7 +910,7 @@ where
             .backend
             .config()
             .hash_algorithm()
-            .calculate_content_digest(source)
+            .calculate_content_digest(source, &self.cancel)
             .await?;
 
         // Create the upload (retryable)

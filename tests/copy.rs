@@ -810,7 +810,7 @@ async fn digests() -> Result<()> {
 
         // Calculate an expected digest for the file's contents
         let expected_digest = algorithm
-            .calculate_content_digest(&source)
+            .calculate_content_digest(&source, &cancel)
             .await
             .unwrap()
             .map(|v| ContentDigest::parse_header(&v).unwrap());

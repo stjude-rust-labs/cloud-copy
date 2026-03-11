@@ -112,6 +112,7 @@ pub struct TransferStats {
 #[cfg_attr(docsrs, doc(cfg(feature = "cli")))]
 pub async fn handle_events(
     mut events: broadcast::Receiver<TransferEvent>,
+    colorize: bool,
     cancel: CancellationToken,
 ) -> Option<TransferStats> {
     struct BlockTransferState {
@@ -144,16 +145,20 @@ pub async fn handle_events(
                             Some(size) => {
                                 bar.pb_set_length(size);
                                 ProgressStyle::with_template(
-                                    "[{elapsed_precise:.cyan/blue}] {bar:20.cyan/blue} \
-                                    {bytes:.cyan/blue} / {total_bytes:.cyan/blue} \
-                                    ({bytes_per_sec:.cyan/blue}) [ETA {eta_precise:.cyan/blue}]: \
-                                    {msg}",
+                                    if colorize {
+                                        "[{elapsed_precise:.cyan/blue}] {bar:20.cyan/blue} {bytes:.cyan/blue} / {total_bytes:.cyan/blue} ({bytes_per_sec:.cyan/blue}) [ETA {eta_precise:.cyan/blue}]: {msg}"
+                                    } else {
+                                        "[{elapsed_precise}] {bar:20} {bytes} / {total_bytes} ({bytes_per_sec}) [ETA {eta_precise}]: {msg}"
+                                    }
                                 )
                                 .unwrap()
                             }
                             None => ProgressStyle::with_template(
-                                "[{elapsed_precise:.cyan/blue}] {spinner:.cyan/blue} \
-                                {bytes:.cyan/blue} ({bytes_per_sec:.cyan/blue}): {msg}",
+                                if colorize {
+                                    "[{elapsed_precise:.cyan/blue}] {spinner:.cyan/blue} {bytes:.cyan/blue} ({bytes_per_sec:.cyan/blue}): {msg}"
+                                } else {
+                                    "[{elapsed_precise}] {spinner} {bytes} ({bytes_per_sec}): {msg}"
+                                }
                             )
                             .unwrap(),
                         };

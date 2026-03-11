@@ -19,6 +19,7 @@
 
 use std::borrow::Cow;
 use std::fmt;
+use std::io::ErrorKind;
 use std::ops::Deref;
 use std::path::Path;
 use std::path::PathBuf;
@@ -71,6 +72,7 @@ mod config;
 mod generator;
 mod pool;
 mod streams;
+mod sys;
 mod transfer;
 
 pub use backend::azure::AzureError;
@@ -413,6 +415,9 @@ pub enum Error {
     /// The specified path is invalid.
     #[error("the specified path cannot be a root directory or empty")]
     InvalidPath,
+    /// The specified parallelism isn't valid.
+    #[error("the specified parallelism cannot be zero")]
+    InvalidParallelism,
     /// The remote content was modified during a download.
     #[error("the remote content was modified during the download")]
     RemoteContentModified,
@@ -501,6 +506,7 @@ impl Error {
             {
                 RetryError::transient(self)
             }
+            Error::Io(e) if e.kind() == ErrorKind::StorageFull => RetryError::Permanent(self),
             Error::Io(_) | Error::Reqwest(_) | Error::Middleware(_) => RetryError::transient(self),
             _ => RetryError::permanent(self),
         }
@@ -709,6 +715,10 @@ pub async fn copy(
     cancel: CancellationToken,
     events: Option<broadcast::Sender<TransferEvent>>,
 ) -> Result<()> {
+    if config.parallelism() == 0 {
+        return Err(Error::InvalidParallelism);
+    }
+
     let source = source.into();
     let destination = destination.into();
 

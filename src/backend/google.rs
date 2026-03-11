@@ -34,6 +34,7 @@ use crate::backend::StorageBackend;
 use crate::backend::Upload;
 use crate::backend::auth::s3::RequestSigner;
 use crate::backend::auth::s3::SignatureProvider;
+use crate::backend::format_range_header;
 use crate::backend::s3::InitiateMultipartUploadResult;
 use crate::backend::s3::ListBucketResult;
 use crate::sha256_hex_string;
@@ -618,15 +619,23 @@ impl StorageBackend for GoogleStorageBackend {
         Ok(response)
     }
 
-    async fn get_at_offset(&self, url: Url, etag: &str, offset: u64) -> Result<Response> {
+    async fn get_range(
+        &self,
+        url: Url,
+        etag: &str,
+        start: u64,
+        exclusive_end: Option<u64>,
+    ) -> Result<Response> {
         debug_assert!(
             Self::is_supported_url(&self.config, &url),
             "{url} is not a supported GCS URL",
             url = url.as_str()
         );
 
+        let range = format_range_header(start, exclusive_end);
+
         debug!(
-            "sending GET request at offset {offset} for `{url}`",
+            "sending GET request with range `{range}` for `{url}`",
             url = url.display(),
         );
 
@@ -641,7 +650,7 @@ impl StorageBackend for GoogleStorageBackend {
                 date.format("%Y%m%dT%H%M%SZ").to_string(),
             )
             .header(GOOGLE_CONTENT_SHA256_HEADER, sha256_hex_string([]))
-            .header(header::RANGE, format!("bytes={offset}-"))
+            .header(header::RANGE, range)
             .header(header::IF_MATCH, etag)
             .build()?;
 
