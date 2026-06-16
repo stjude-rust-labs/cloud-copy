@@ -42,9 +42,6 @@ use crate::streams::TransferStream;
 /// The root domain for AWS.
 const AWS_ROOT_DOMAIN: &str = "amazonaws.com";
 
-/// The root domain for localstack.
-const LOCALSTACK_ROOT_DOMAIN: &str = "localhost.localstack.cloud";
-
 /// The maximum number of parts in an upload.
 const MAX_PARTS: u64 = 10000;
 
@@ -555,8 +552,8 @@ impl StorageBackend for S3StorageBackend {
                     // There must be at least two path segments
                     !region.is_empty()
                         && (domain.eq_ignore_ascii_case(AWS_ROOT_DOMAIN)
-                            || (config.s3().use_localstack()
-                                && domain.eq_ignore_ascii_case(LOCALSTACK_ROOT_DOMAIN)))
+                            || (config.s3().use_floci()
+                                && domain.eq_ignore_ascii_case("localhost")))
                         && url
                             .path_segments()
                             .map(|mut s| s.nth(1).is_some())
@@ -571,8 +568,8 @@ impl StorageBackend for S3StorageBackend {
                                 && !region.is_empty()
                                 && service.eq_ignore_ascii_case("s3")
                                 && (domain.eq_ignore_ascii_case(AWS_ROOT_DOMAIN)
-                                    || (config.s3().use_localstack()
-                                        && domain.eq_ignore_ascii_case(LOCALSTACK_ROOT_DOMAIN)))
+                                    || (config.s3().use_floci()
+                                        && domain.eq_ignore_ascii_case("localhost")))
                                 && url
                                     .path_segments()
                                     .map(|mut s| s.next().is_some())
@@ -597,8 +594,8 @@ impl StorageBackend for S3StorageBackend {
                     return Err(S3Error::InvalidScheme.into());
                 }
 
-                let (scheme, root, port) = if config.s3().use_localstack() {
-                    ("http", LOCALSTACK_ROOT_DOMAIN, ":4566")
+                let (scheme, root, port) = if config.s3().use_floci() {
+                    ("http", "localhost", ":4566")
                 } else {
                     ("https", AWS_ROOT_DOMAIN, "")
                 };

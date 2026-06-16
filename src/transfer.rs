@@ -44,6 +44,7 @@ use crate::TransferEvent;
 use crate::UrlExt;
 use crate::backend::StorageBackend;
 use crate::backend::Upload;
+use crate::detect_walk_conflict;
 use crate::notify_retry;
 use crate::pool::BufferGuard;
 use crate::pool::BufferPool;
@@ -795,7 +796,7 @@ where
         let destination = destination.as_ref();
 
         // Start by walking the given URL for files to download
-        let paths = Retry::spawn_notify(
+        let mut paths = Retry::spawn_notify(
             self.inner.backend.config().retry_durations(),
             || async {
                 select! {
@@ -808,6 +809,10 @@ where
             notify_retry,
         )
         .await?;
+
+        // Sort the paths and check for conflicts
+        paths.sort();
+        detect_walk_conflict(&source, &paths)?;
 
         // Delete the destination if it exists
         if let Ok(metadata) = destination.metadata() {

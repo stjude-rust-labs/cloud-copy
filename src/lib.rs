@@ -114,6 +114,32 @@ fn sha256_hex_string(bytes: impl AsRef<[u8]>) -> String {
     hex::encode(hash.finalize())
 }
 
+/// Used to detect conflicting entries in a walk operation.
+///
+/// Assumes the provided entries are sorted.
+///
+/// A walk produces a list of files. If an entry prefixes another, it means that
+/// a file would conflict with a directory.
+fn detect_walk_conflict(url: &Url, entries: &[String]) -> Result<()> {
+    let mut iter = entries.iter().peekable();
+    while let Some(entry) = iter.next() {
+        if let Some(next) = iter.peek()
+            && next
+                .strip_prefix(entry)
+                .and_then(|p| p.strip_prefix('/'))
+                .is_some()
+        {
+            return Err(Error::WalkConflict {
+                url: url.display().to_string(),
+                first: entry.clone(),
+                second: (*next).clone(),
+            });
+        }
+    }
+
+    Ok(())
+}
+
 trait DateTimeExt {
     /// Converts a [`DateTime`] to a HTTP date string.
     ///
@@ -421,6 +447,16 @@ pub enum Error {
     /// The remote content was modified during a download.
     #[error("the remote content was modified during the download")]
     RemoteContentModified,
+    /// Failed to walk a URL due to a conflict in its entries.
+    #[error("failed to walk URL `{url}` due to conflicting entries `{first}` and `{second}`")]
+    WalkConflict {
+        /// The URL that failed to walk.
+        url: String,
+        /// The first conflicting entry.
+        first: String,
+        /// The second conflicting entry.
+        second: String,
+    },
     /// Failed to create a directory.
     #[error("failed to create directory `{path}`: {error}", path = .path.display())]
     DirectoryCreationFailed {
@@ -819,7 +855,8 @@ pub fn rewrite_url<'a>(config: &Config, url: &'a Url) -> Result<Cow<'a, Url>> {
 
 /// Walks a given storage URL as if it were a directory.
 ///
-/// Returns a list of relative paths from the given URL.
+/// Returns a lexicographically-sorted list of relative paths from the given
+/// URL.
 ///
 /// If the given storage URL is not a directory, an empty list is returned.
 pub async fn walk(config: Config, client: HttpClient, mut url: Url) -> Result<Vec<String>> {
@@ -829,7 +866,7 @@ pub async fn walk(config: Config, client: HttpClient, mut url: Url) -> Result<Ve
         segments.pop_if_empty().push("");
     }
 
-    if AzureBlobStorageBackend::is_supported_url(&config, &url) {
+    let mut entries = if AzureBlobStorageBackend::is_supported_url(&config, &url) {
         let url = AzureBlobStorageBackend::rewrite_url(&config, &url)?;
         AzureBlobStorageBackend::new(config, client, None)
             .walk(url.into_owned(), false)
@@ -845,8 +882,14 @@ pub async fn walk(config: Config, client: HttpClient, mut url: Url) -> Result<Ve
             .walk(url.into_owned(), false)
             .await
     } else {
-        Err(Error::UnsupportedUrl(url))
-    }
+        Err(Error::UnsupportedUrl(url.clone()))
+    }?;
+
+    // Sort the entries and check for conflicts
+    entries.sort();
+    detect_walk_conflict(&url, &entries)?;
+
+    Ok(entries)
 }
 
 /// Represents the content digest of a resource.
@@ -1097,7 +1140,7 @@ mod test {
 
         let config = Config::builder()
             .with_azure(AzureConfig::default().with_use_azurite(true))
-            .with_s3(S3Config::default().with_use_localstack(true))
+            .with_s3(S3Config::default().with_use_floci(true))
             .build();
 
         assert_eq!(
@@ -1111,7 +1154,7 @@ mod test {
             rewrite_url(&config, &"s3://foo/bar/baz".parse().unwrap())
                 .unwrap()
                 .as_str(),
-            "http://foo.s3.us-east-1.localhost.localstack.cloud:4566/bar/baz"
+            "http://foo.s3.us-east-1.localhost:4566/bar/baz",
         );
     }
 }

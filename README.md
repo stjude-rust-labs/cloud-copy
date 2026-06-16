@@ -135,18 +135,18 @@ Automated tests rely on having the following cloud service emulators installed:
 
 * [Azurite](https://learn.microsoft.com/en-us/azure/storage/common/storage-use-azurite?tabs=visual-studio%2Cblob-storage)
   for Azure Blob Storage.
-* [Localstack](https://github.com/localstack/localstack) for AWS S3.
+* [Floci](https://github.com/floci-io/floci) for AWS S3.
 
 Use the following command to run Azurite in a Docker container:
 
 ```bash
-docker run -p 10000:10000 mcr.microsoft.com/azure-storage/azurite azurite -l /data --blobHost 0.0.0.0 --loose
+docker run -p 10000:10000 mcr.microsoft.com/azure-storage/azurite azurite -l /data --blobHost 0.0.0.0 --loose --skipApiVersionCheck
 ```
 
-Use the following command to run Localstack in a Docker container:
+Use the following command to run Floci in a Docker container:
 
 ```bash
-docker run -p 4566:4566 localstack/localstack:s3-latest
+docker run -p 4566:4566 floci/floci:latest
 ```
 
 The tests expect a container/bucket with the name `cloud-copy-test` to be
@@ -158,10 +158,10 @@ To create the container with Azurite, use the Azure CLI:
 az storage container create --name cloud-copy-test --connection-string "DefaultEndpointsProtocol=http;AccountName=devstoreaccount1;AccountKey=Eby8vdM02xNOcqFlqUwJPLlmEtlCDXJ1OUzFT50uSRZ6IFsuFq2UVErCz4I6tq/K1SZFPTOtr/KBHBeksoGMGw==;BlobEndpoint=http://127.0.0.1:10000/devstoreaccount1"
 ```
 
-To create the bucket with Localstack, use the `awslocal` tool:
+To create the bucket with Floci, use the `aws` tool:
 
 ```bash
-awslocal s3api create-bucket --bucket cloud-copy-test
+AWS_ACCESS_KEY_ID=test AWS_SECRET_ACCESS_KEY=test AWS_DEFAULT_REGION=${DEFAULT_REGION:-$AWS_DEFAULT_REGION} aws --endpoint-url=http://localhost:4566 s3api create-bucket --bucket cloud-copy-test
 ```
 
 Finally, run the tests:

@@ -228,9 +228,9 @@ pub struct S3Config {
     /// If `None`, no authentication header will be put on requests.
     #[serde(default)]
     auth: Option<S3AuthConfig>,
-    /// Stores whether or not localstack is being used.
+    /// Stores whether or not Floci is being used.
     #[serde(default)]
-    use_localstack: bool,
+    use_floci: bool,
 }
 
 impl S3Config {
@@ -265,15 +265,15 @@ impl S3Config {
         self
     }
 
-    /// Sets whether or not [localstack](https://github.com/localstack/localstack) is being used.
+    /// Sets whether or not [Floci](https://github.com/floci-io/floci) is being used.
     ///
-    /// The domain suffix is expected to be `localhost.localstack.cloud`.
+    /// The domain suffix is expected to be `localhost` for Floci requests.
     ///
     /// Any URLs that use the `s3` scheme will be rewritten to use that suffix.
     ///
     /// This setting is primarily intended for local testing.
-    pub fn with_use_localstack(mut self, use_localstack: bool) -> Self {
-        self.use_localstack = use_localstack;
+    pub fn with_use_floci(mut self, use_floci: bool) -> Self {
+        self.use_floci = use_floci;
         self
     }
 
@@ -291,9 +291,9 @@ impl S3Config {
         self.auth.as_ref()
     }
 
-    /// Gets whether or not [localstack](https://github.com/localstack/localstack) is being used.
-    pub fn use_localstack(&self) -> bool {
-        self.use_localstack
+    /// Gets whether or not [Floci](https://github.com/floci-io/floci) is being used.
+    pub fn use_floci(&self) -> bool {
+        self.use_floci
     }
 }
 
