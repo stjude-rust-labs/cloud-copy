@@ -114,13 +114,23 @@ fn sha256_hex_string(bytes: impl AsRef<[u8]>) -> String {
     hex::encode(hash.finalize())
 }
 
-/// Used to detect conflicting entries in a walk operation.
+/// Sorts a set of walk entries.
 ///
-/// Assumes the provided entries are sorted.
+/// Entries are expected to be resource subpaths, e.g. `foo` and `bar/baz`.
 ///
-/// A walk produces a list of files. If an entry prefixes another, it means that
-/// a file would conflict with a directory.
-fn detect_walk_conflict(url: &Url, entries: &[String]) -> Result<()> {
+/// Each entry is sorted by path segment.
+///
+/// If an entry prefixes another, it means that a file would conflict with a
+/// directory and an error is returned.
+fn sort_walk_entries(url: &Url, entries: &mut [String]) -> Result<()> {
+    // Sort each entry by path components
+    entries.sort_by(|a, b| {
+        let a = Path::new(a);
+        let b = Path::new(b);
+        a.components().cmp(b.components())
+    });
+
+    // Check for conflicting entries
     let mut iter = entries.iter().peekable();
     while let Some(entry) = iter.next() {
         if let Some(next) = iter.peek()
@@ -885,10 +895,8 @@ pub async fn walk(config: Config, client: HttpClient, mut url: Url) -> Result<Ve
         Err(Error::UnsupportedUrl(url.clone()))
     }?;
 
-    // Sort the entries and check for conflicts
-    entries.sort();
-    detect_walk_conflict(&url, &entries)?;
-
+    // Sort the entries
+    sort_walk_entries(&url, &mut entries)?;
     Ok(entries)
 }
 

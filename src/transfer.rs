@@ -44,10 +44,10 @@ use crate::TransferEvent;
 use crate::UrlExt;
 use crate::backend::StorageBackend;
 use crate::backend::Upload;
-use crate::detect_walk_conflict;
 use crate::notify_retry;
 use crate::pool::BufferGuard;
 use crate::pool::BufferPool;
+use crate::sort_walk_entries;
 use crate::streams::TransferStream;
 
 /// The supported `accept-range` unit.
@@ -796,7 +796,7 @@ where
         let destination = destination.as_ref();
 
         // Start by walking the given URL for files to download
-        let mut paths = Retry::spawn_notify(
+        let mut entries = Retry::spawn_notify(
             self.inner.backend.config().retry_durations(),
             || async {
                 select! {
@@ -810,9 +810,8 @@ where
         )
         .await?;
 
-        // Sort the paths and check for conflicts
-        paths.sort();
-        detect_walk_conflict(&source, &paths)?;
+        // Sort the entries
+        sort_walk_entries(&source, &mut entries)?;
 
         // Delete the destination if it exists
         if let Ok(metadata) = destination.metadata() {
@@ -827,7 +826,7 @@ where
         let mut set = JoinSet::new();
 
         // If there are no files relative to the given URL, download just the given URL
-        if paths.is_empty() {
+        if entries.is_empty() {
             let inner = self.inner.clone();
             let destination = destination.to_path_buf();
             let permits = permits.clone();
@@ -835,7 +834,7 @@ where
             set.spawn(async move { inner.download(source, &destination, permits, cancel).await });
         } else {
             // Otherwise, download each file in turn
-            for path in paths {
+            for entry in entries {
                 let inner = self.inner.clone();
                 let mut source = source.clone();
                 let mut destination = destination.to_path_buf();
@@ -846,7 +845,7 @@ where
                 {
                     let mut segments = source.path_segments_mut().expect("URL should have a path");
                     segments.pop_if_empty();
-                    for segment in path.split('/') {
+                    for segment in entry.split('/') {
                         segments.push(segment);
                         destination.push(segment);
                     }

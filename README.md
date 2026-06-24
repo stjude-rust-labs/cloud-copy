@@ -161,7 +161,7 @@ az storage container create --name cloud-copy-test --connection-string "DefaultE
 To create the bucket with Floci, use the `aws` tool:
 
 ```bash
-AWS_ACCESS_KEY_ID=test AWS_SECRET_ACCESS_KEY=test AWS_DEFAULT_REGION=${DEFAULT_REGION:-$AWS_DEFAULT_REGION} aws --endpoint-url=http://localhost:4566 s3api create-bucket --bucket cloud-copy-test
+AWS_ACCESS_KEY_ID=test AWS_SECRET_ACCESS_KEY=test aws --endpoint-url=http://localhost:4566 s3api create-bucket --bucket cloud-copy-test
 ```
 
 Finally, run the tests:

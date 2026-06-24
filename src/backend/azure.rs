@@ -172,25 +172,12 @@ pub enum AzureError {
     InvalidAccessKey,
 }
 
-/// Represents properties of a blob.
-#[derive(Default, Debug, Deserialize)]
-struct BlobProperties {
-    /// The resource type of the blob.
-    ///
-    /// May be either `file` or `directory` when present.
-    #[serde(default, rename = "ResourceType")]
-    resource_type: Option<String>,
-}
-
 /// Represents information about a blob.
 #[derive(Debug, Deserialize)]
 struct Blob {
     /// The name of the blob.
     #[serde(rename = "Name")]
     name: String,
-
-    #[serde(default, rename = "Properties")]
-    properties: BlobProperties,
 }
 
 /// Represents a list of blobs.
@@ -759,6 +746,8 @@ impl StorageBackend for AzureBlobStorageBackend {
             pairs.append_pair("comp", "list");
             // The prefix to use for listing blobs in the container.
             pairs.append_pair("prefix", &prefix);
+            // Only include files in the output.
+            pairs.append_pair("showonly", "files");
 
             // Only return at most one result if we're returning the first only
             if first_only {
@@ -812,14 +801,9 @@ impl StorageBackend for AzureBlobStorageBackend {
                 return Ok(paths);
             }
 
-            paths.extend(results.blobs.items.into_iter().filter_map(|b| {
-                // Filter out "directory blobs"
-                if b.properties.resource_type.as_deref() == Some("directory") {
-                    return None;
-                }
-
+            paths.extend(results.blobs.items.into_iter().map(|b| {
                 let name = b.name.strip_prefix(&prefix).unwrap_or(&b.name);
-                Some(name.strip_prefix('/').unwrap_or(name).into())
+                name.strip_prefix('/').unwrap_or(name).into()
             }));
 
             next = results.next.unwrap_or_default();
