@@ -746,6 +746,8 @@ impl StorageBackend for AzureBlobStorageBackend {
             pairs.append_pair("comp", "list");
             // The prefix to use for listing blobs in the container.
             pairs.append_pair("prefix", &prefix);
+            // Only include files in the output.
+            pairs.append_pair("showonly", "files");
 
             // Only return at most one result if we're returning the first only
             if first_only {

@@ -47,9 +47,9 @@ jobs:
       - uses: actions/checkout@v4
       - name: Install Azure CLI
         run: curl -sL https://aka.ms/InstallAzureCLIDeb | sudo bash
-      - name: Start LocalStack (AWS S3)
+      - name: Start Floci (AWS S3)
         run: |
-          container=$(docker create -p 4566:4566 localstack/localstack:s3-latest)
+          container=$(docker create -p 4566:4566 floci/floci:latest)
           docker start $container
           sleep 5
           docker logs $container
@@ -61,7 +61,7 @@ jobs:
           docker logs $container
       - name: Create test AWS S3 bucket
         run: |
-          AWS_ACCESS_KEY_ID=test AWS_SECRET_ACCESS_KEY=test AWS_DEFAULT_REGION=${DEFAULT_REGION:-$AWS_DEFAULT_REGION} aws --endpoint-url=http://localhost:4566 s3api create-bucket --bucket cloud-copy-test
+          AWS_ACCESS_KEY_ID=test AWS_SECRET_ACCESS_KEY=test aws --endpoint-url=http://localhost:4566 s3api create-bucket --bucket cloud-copy-test
       - name: Create test Azure Storage container
         run: |
           az storage container create --name cloud-copy-test --connection-string "DefaultEndpointsProtocol=http;AccountName=devstoreaccount1;AccountKey=Eby8vdM02xNOcqFlqUwJPLlmEtlCDXJ1OUzFT50uSRZ6IFsuFq2UVErCz4I6tq/K1SZFPTOtr/KBHBeksoGMGw==;BlobEndpoint=http://localhost:10000/devstoreaccount1"

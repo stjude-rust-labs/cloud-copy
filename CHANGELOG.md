@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## Unreleased
 
+#### Fixed
+
+* Fixed `walk` implementation to filter "directory" blobs from Azure Blob ([#36](https://github.com/stjude-rust-labs/cloud-copy/pull/36)).
+
+#### Changed
+
+* Switched to `floci` for testing S3 in CI ([#36](https://github.com/stjude-rust-labs/cloud-copy/pull/36)).
+
 ## 0.8.0 - 03-20-2026
 
 #### Added
