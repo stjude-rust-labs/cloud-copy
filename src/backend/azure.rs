@@ -570,7 +570,7 @@ impl StorageBackend for AzureBlobStorageBackend {
 
         let mut request = self
             .client
-            .get(url)
+            .head(url)
             .header(header::ACCEPT, "application/xml")
             .header(header::USER_AGENT, USER_AGENT)
             .header(header::DATE, Utc::now().to_http_date())
