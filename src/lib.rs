@@ -21,6 +21,7 @@ use std::borrow::Cow;
 use std::fmt;
 use std::io::ErrorKind;
 use std::ops::Deref;
+use std::path::Component;
 use std::path::Path;
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -122,6 +123,9 @@ fn sha256_hex_string(bytes: impl AsRef<[u8]>) -> String {
 ///
 /// If an entry prefixes another, it means that a file would conflict with a
 /// directory and an error is returned.
+///
+/// Each entry may not contain a path segment that references the root or a
+/// parent directory, otherwise an error is returned.
 fn sort_walk_entries(url: &Url, entries: &mut [String]) -> Result<()> {
     // Sort each entry by path components
     entries.sort_by(|a, b| {
@@ -130,16 +134,29 @@ fn sort_walk_entries(url: &Url, entries: &mut [String]) -> Result<()> {
         a.components().cmp(b.components())
     });
 
-    // Check for conflicting entries
+    // Check for invalid or conflicting entries
     let mut iter = entries.iter().peekable();
     while let Some(entry) = iter.next() {
+        // Ensure entry segments don't reference the root or parent directory
+        if Path::new(entry)
+            .components()
+            .any(|c| !matches!(c, Component::Normal(_) | Component::CurDir))
+        {
+            return Err(Error::InvalidWalkEntry {
+                url: url.display().to_string(),
+                entry: entry.clone(),
+            });
+        }
+
+        // Ensure the next entry in the sorted list is not prefixed with this entry,
+        // otherwise a file conflicts with a directory
         if let Some(next) = iter.peek()
             && next
                 .strip_prefix(entry)
                 .and_then(|p| p.strip_prefix('/'))
                 .is_some()
         {
-            return Err(Error::WalkConflict {
+            return Err(Error::WalkEntryConflict {
                 url: url.display().to_string(),
                 first: entry.clone(),
                 second: (*next).clone(),
@@ -457,9 +474,17 @@ pub enum Error {
     /// The remote content was modified during a download.
     #[error("the remote content was modified during the download")]
     RemoteContentModified,
+    /// Failed to walk a URL due to an invalid entry.
+    #[error("failed to walk URL `{url}` due to invalid entry `{entry}`")]
+    InvalidWalkEntry {
+        /// The URL that failed to walk.
+        url: String,
+        /// The invalid entry
+        entry: String,
+    },
     /// Failed to walk a URL due to a conflict in its entries.
     #[error("failed to walk URL `{url}` due to conflicting entries `{first}` and `{second}`")]
-    WalkConflict {
+    WalkEntryConflict {
         /// The URL that failed to walk.
         url: String,
         /// The first conflicting entry.
