@@ -790,15 +790,6 @@ impl StorageBackend for GoogleStorageBackend {
             url = url.as_str()
         );
 
-        // GCS doesn't support conditional requests for `CreateMultipartUpload`.
-        // Therefore, we must issue a HEAD request for the object if not overwriting.
-        if !self.config.overwrite() {
-            let response = self.head(url.clone(), false).await?;
-            if response.status() != StatusCode::NOT_FOUND {
-                return Err(Error::RemoteDestinationExists(url));
-            }
-        }
-
         debug!("sending POST request for `{url}`", url = url.display());
 
         let mut create = url.clone();
