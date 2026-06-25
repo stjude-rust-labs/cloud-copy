@@ -5,6 +5,7 @@ use std::collections::BTreeMap;
 
 use base64::Engine;
 use base64::prelude::BASE64_STANDARD;
+use hmac::KeyInit;
 use hmac::Mac;
 use http_cache_stream_reqwest::semantics;
 use reqwest::Method;

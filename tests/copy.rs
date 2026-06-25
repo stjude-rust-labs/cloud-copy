@@ -21,7 +21,7 @@ use cloud_copy::rewrite_url;
 use futures::FutureExt;
 use futures::future::LocalBoxFuture;
 use pretty_assertions::assert_eq;
-use rand::Rng;
+use rand::RngExt;
 use tempfile::NamedTempFile;
 use tempfile::tempdir;
 use tokio::fs::File;
