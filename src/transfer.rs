@@ -908,6 +908,15 @@ where
 
     /// Uploads the given file to the given destination.
     async fn upload_file(&self, source: &Path, destination: Url, file_size: u64) -> Result<()> {
+        // Prior to uploading the file, ensure it doesn't already exist if not
+        // overwriting
+        if !self.inner.backend.config().overwrite() {
+            let response = self.inner.backend.head(destination.clone(), false).await?;
+            if response.status() != StatusCode::NOT_FOUND {
+                return Err(Error::RemoteDestinationExists(destination));
+            }
+        }
+
         // Calculate the content digest
         let digest = self
             .inner

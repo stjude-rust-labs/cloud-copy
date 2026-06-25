@@ -822,16 +822,6 @@ impl StorageBackend for AzureBlobStorageBackend {
             url = url.as_str()
         );
 
-        // Azure doesn't support conditional requests for `Put Block`.
-        // Therefore, we must issue a HEAD request for the blob if not overwriting.
-        // See: https://learn.microsoft.com/en-us/rest/api/storageservices/specifying-conditional-headers-for-blob-service-operations
-        if !self.config.overwrite() {
-            let response = self.head(url.clone(), false).await?;
-            if response.status() != StatusCode::NOT_FOUND {
-                return Err(Error::RemoteDestinationExists(url));
-            }
-        }
-
         Ok(AzureBlobUpload::new(
             self.config.clone(),
             self.client.clone(),

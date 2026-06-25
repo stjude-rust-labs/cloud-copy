@@ -868,16 +868,6 @@ impl StorageBackend for S3StorageBackend {
             url = url.as_str()
         );
 
-        // S3 doesn't support conditional requests for `CreateMultipartUpload`.
-        // Therefore, we must issue a HEAD request for the object if not overwriting.
-        // See: https://docs.aws.amazon.com/AmazonS3/latest/userguide/conditional-writes.html#conditional-write-key-names
-        if !self.config.overwrite() {
-            let response = self.head(url.clone(), false).await?;
-            if response.status() != StatusCode::NOT_FOUND {
-                return Err(Error::RemoteDestinationExists(url));
-            }
-        }
-
         debug!("sending POST request for `{url}`", url = url.display());
 
         let mut create = url.clone();
