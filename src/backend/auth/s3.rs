@@ -8,6 +8,7 @@ use std::ops::Deref;
 
 use chrono::DateTime;
 use chrono::Utc;
+use hmac::KeyInit;
 use hmac::Mac;
 use reqwest::Request;
 use sha2::Digest;

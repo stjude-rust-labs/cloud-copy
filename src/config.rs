@@ -12,6 +12,7 @@ use std::time::Duration;
 
 use base64::Engine;
 use base64::prelude::BASE64_STANDARD;
+use digest_io::IoWrapper;
 use secrecy::SecretString;
 use serde::Deserialize;
 use sha2::Digest;
@@ -63,10 +64,10 @@ impl HashAlgorithm {
             Self::Sha256 => {
                 let path = path.to_path_buf();
                 let fut = spawn_blocking(move || {
-                    let mut hasher = sha2::Sha256::new();
+                    let mut hasher = IoWrapper(sha2::Sha256::new());
                     let mut reader = BufReader::new(File::open(path)?);
                     std::io::copy(&mut reader, &mut hasher)?;
-                    let digest = hasher.finalize();
+                    let digest = hasher.0.finalize();
                     Ok(Some(format!(
                         "sha-256=:{encoded}:",
                         encoded = BASE64_STANDARD.encode(digest)

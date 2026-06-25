@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## Unreleased
 
+## 0.9.0 - 06-25-2026
+
 #### Fixed
 
 * Fixed upload content digests being calculated despite existence of the file

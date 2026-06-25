@@ -2,7 +2,7 @@
 
 use std::fmt;
 
-use rand::Rng as _;
+use rand::RngExt;
 
 /// An alphanumeric string generator.
 ///
