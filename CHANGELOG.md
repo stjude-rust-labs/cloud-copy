@@ -9,6 +9,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 #### Fixed
 
+* Fixed the Azure backend not issuing a HEAD request for its `head` method
+  implementation ([#37](https://github.com/stjude-rust-labs/cloud-copy/pull/37)).
 * Fixed `walk` implementation to filter "directory" blobs from Azure Blob ([#36](https://github.com/stjude-rust-labs/cloud-copy/pull/36)).
 
 #### Changed
