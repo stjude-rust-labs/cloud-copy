@@ -627,6 +627,13 @@ pub enum TransferEvent {
         /// The total number of bytes transferred in the block so far.
         transferred: u64,
     },
+    /// A block was restarted from the beginning.
+    BlockRestarted {
+        /// The id of the transfer.
+        id: u64,
+        /// The block number being transferred.
+        block: u64,
+    },
     /// A transfer of a block has completed.
     BlockCompleted {
         /// The id of the transfer.

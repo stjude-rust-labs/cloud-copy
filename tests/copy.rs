@@ -657,6 +657,7 @@ async fn events() -> Result<()> {
                         assert_eq!(block, 0, "unexpected block id");
                         assert_eq!(size, Some(FILE_SIZE), "unexpected file size");
                     }
+                    TransferEvent::BlockRestarted { .. } => continue,
                     TransferEvent::BlockProgress { .. } => continue,
                     TransferEvent::BlockCompleted { block, failed, .. } => {
                         assert_eq!(block, 0, "unexpected block id");

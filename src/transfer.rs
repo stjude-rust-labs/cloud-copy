@@ -131,14 +131,16 @@ where
         // Start by sending a HEAD request for the file's size and etag
         let response = Retry::spawn_notify(
             self.backend.config().retry_durations(),
-            || async {
-                select! {
-                    biased;
-                    _ = cancel.cancelled() => Err(Error::Canceled),
-                    r = async {
-                        let _permit = permits.acquire().await.expect("semaphore was closed");
-                        self.backend.head(source.clone(), true).await
-                    } => r
+            || {
+                async {
+                    select! {
+                        biased;
+                        _ = cancel.cancelled() => Err(Error::Canceled),
+                        r = async {
+                            let _permit = permits.acquire().await.expect("semaphore was closed");
+                            self.backend.head(source.clone(), true).await
+                        } => r
+                    }
                 }
                 .map_err(Error::into_retry_error)
             },
@@ -292,13 +294,17 @@ where
 
         if accept_ranges {
             debug!(
-                "file `{source}` will be downloaded with resumable retries",
-                source = info.source.display()
+                "file `{source}` will be downloaded with {retries} retries and resumed at point \
+                 of failure",
+                source = info.source.display(),
+                retries = self.backend.config().retries(),
             );
         } else {
             debug!(
-                "file `{source}` will be downloaded with retries starting at the beginning",
-                source = info.source.display()
+                "file `{source}` will be downloaded with {retries} retries and restarted from the \
+                 beginning",
+                source = info.source.display(),
+                retries = self.backend.config().retries(),
             );
         }
 
@@ -308,121 +314,134 @@ where
             // Retry the download with resume (if server accepts ranged requests)
             Retry::spawn_notify(
                 self.backend.config().retry_durations(),
-                || async {
-                    let mut current = offset.load(Ordering::SeqCst);
+                || {
+                    async {
+                        let mut current = offset.load(Ordering::SeqCst);
 
-                    let response = if accept_ranges
-                        && current > 0
-                        && let Some(etag) = etag
-                    {
-                        self.backend
-                            .get_range(info.source.clone(), etag, current, None)
-                            .await?
-                    } else {
-                        let response = self.backend.get(info.source.clone()).await?;
-
-                        // Check to see if we should link to the cache location
-                        if self.backend.config().link_to_cache()
-                            && let Some(digest) = response
-                                .headers()
-                                .get(X_CACHE_DIGEST)
-                                .and_then(|v| v.to_str().ok())
-                            && let Some(cache) = self.backend.cache()
+                        let response = if accept_ranges
+                            && current > 0
+                            && let Some(etag) = etag
                         {
-                            let path = cache.storage().body_path(digest);
-                            if path.is_file() {
-                                // Remove the existing temp file and replace it with a hard link
-                                fs::remove_file(info.destination).await.ok();
-                                match fs::hard_link(&path, info.destination).await {
-                                    Ok(_) => {
-                                        debug!(
-                                            "created a hard link from cache location `{path}`",
-                                            path = path.display(),
-                                        );
-                                        return Ok(());
-                                    }
-                                    Err(e) => {
-                                        warn!(
-                                            "failed to create a hard link to cached file \
-                                             (performing a copy instead): {e}"
-                                        );
+                            self.backend
+                                .get_range(info.source.clone(), etag, current, None)
+                                .await?
+                        } else {
+                            let response = self.backend.get(info.source.clone()).await?;
+
+                            // Check to see if we should link to the cache location
+                            if self.backend.config().link_to_cache()
+                                && let Some(digest) = response
+                                    .headers()
+                                    .get(X_CACHE_DIGEST)
+                                    .and_then(|v| v.to_str().ok())
+                                && let Some(cache) = self.backend.cache()
+                            {
+                                let path = cache.storage().body_path(digest);
+                                if path.is_file() {
+                                    // Remove the existing temp file and replace it with a hard link
+                                    fs::remove_file(info.destination).await.ok();
+                                    match fs::hard_link(&path, info.destination).await {
+                                        Ok(_) => {
+                                            debug!(
+                                                "created a hard link from cache location `{path}`",
+                                                path = path.display(),
+                                            );
+                                            return Ok(());
+                                        }
+                                        Err(e) => {
+                                            warn!(
+                                                "failed to create a hard link to cached file \
+                                                 (performing a copy instead): {e}"
+                                            );
+                                        }
                                     }
                                 }
                             }
-                        }
 
-                        response
-                    };
+                            response
+                        };
 
-                    // If the response is not partial, start from the beginning
-                    if response.status() != StatusCode::PARTIAL_CONTENT {
-                        if current > 0 {
+                        // If the response is not partial, start from the beginning
+                        if response.status() != StatusCode::PARTIAL_CONTENT {
+                            if current > 0 {
+                                debug!(
+                                    "resuming download of `{source}` from the beginning",
+                                    source = info.source.display()
+                                );
+
+                                // Notify that the block was restarted
+                                if let Some(events) = self.backend.events() {
+                                    events
+                                        .send(TransferEvent::BlockRestarted {
+                                            id: info.id,
+                                            block: 0,
+                                        })
+                                        .ok();
+                                }
+                            }
+
+                            current = 0;
+                        } else {
+                            // Ensure the response starts at the requested position
+                            if !response
+                                .headers()
+                                .get(header::CONTENT_RANGE)
+                                .and_then(|v| v.to_str().ok())
+                                .map(|v| v.trim_start().starts_with(&format!("bytes {current}-")))
+                                .unwrap_or(false)
+                            {
+                                return Err(Error::UnexpectedContentRangeStart);
+                            }
+
                             debug!(
-                                "resuming download of `{source}` from the beginning",
+                                "resuming download of `{source}` from offset {current}",
                                 source = info.source.display()
                             );
                         }
 
-                        current = 0;
-                    } else {
-                        // Ensure the response starts at the requested position
-                        if !response
-                            .headers()
-                            .get(header::CONTENT_RANGE)
-                            .and_then(|v| v.to_str().ok())
-                            .map(|v| v.trim_start().starts_with(&format!("bytes {current}-")))
-                            .unwrap_or(false)
-                        {
-                            return Err(Error::UnexpectedContentRangeStart.into());
-                        }
+                        let mut reader = StreamReader::new(TransferStream::new(
+                            response.bytes_stream().map_err(std::io::Error::other),
+                            info.id,
+                            0,
+                            current,
+                            self.backend.events().clone(),
+                        ));
 
-                        debug!(
-                            "resuming download of `{source}` from offset {current}",
-                            source = info.source.display()
-                        );
-                    }
+                        let mut file = fs::OpenOptions::new()
+                            .create(true)
+                            .write(true)
+                            .truncate(false)
+                            .open(info.destination)
+                            .await
+                            .map_err(|error| Error::CreateTempFile { error })?;
 
-                    let mut reader = StreamReader::new(TransferStream::new(
-                        response.bytes_stream().map_err(std::io::Error::other),
-                        info.id,
-                        0,
-                        current,
-                        self.backend.events().clone(),
-                    ));
-
-                    let mut file = fs::OpenOptions::new()
-                        .create(true)
-                        .write(true)
-                        .truncate(false)
-                        .open(info.destination)
-                        .await
-                        .map_err(|error| Error::CreateTempFile { error })?;
-
-                    file.set_len(current).await.map_err(Error::from)?;
-                    file.seek(SeekFrom::Start(current))
-                        .await
-                        .map_err(Error::from)?;
-
-                    let mut writer = BufWriter::new(file);
-
-                    // Copy the response stream to the temp file
-                    // If there is an error, update the current offset so that we resume on next
-                    // retry
-                    if let Err(e) = tokio::io::copy(&mut reader, &mut writer)
-                        .await
-                        .map_err(Error::from)
-                    {
-                        // Flush the writer and determine how much was written
-                        writer.flush().await.map_err(Error::from)?;
-                        let written = writer
-                            .seek(SeekFrom::Current(0))
+                        file.set_len(current).await.map_err(Error::from)?;
+                        file.seek(SeekFrom::Start(current))
                             .await
                             .map_err(Error::from)?;
-                        offset.store(written, Ordering::SeqCst);
-                        return Err(e.into());
-                    }
 
-                    Ok(())
+                        let mut writer = BufWriter::new(file);
+
+                        // Copy the response stream to the temp file
+                        // If there is an error, update the current offset so that we resume on next
+                        // retry
+                        if let Err(e) = tokio::io::copy(&mut reader, &mut writer)
+                            .await
+                            .map_err(Error::from)
+                        {
+                            // Flush the writer and determine how much was written
+                            writer.flush().await.map_err(Error::from)?;
+                            let written = writer
+                                .seek(SeekFrom::Current(0))
+                                .await
+                                .map_err(Error::from)?;
+                            offset.store(written, Ordering::SeqCst);
+                            return Err(e);
+                        }
+
+                        Ok(())
+                    }
+                    .map_err(Error::into_retry_error)
                 },
                 notify_retry,
             )
@@ -502,8 +521,8 @@ where
                     Retry::spawn_notify(
                         inner.backend.config().retry_durations(),
                         || {
-                            inner
-                                .download_block(
+                            {
+                                inner.download_block(
                                     source.clone(),
                                     BlockDownloadInfo {
                                         id,
@@ -517,7 +536,8 @@ where
                                     &permits,
                                     cancel.clone(),
                                 )
-                                .map_err(Error::into_retry_error)
+                            }
+                            .map_err(Error::into_retry_error)
                         },
                         notify_retry,
                     )
@@ -643,8 +663,8 @@ where
                         biased;
                         _ = cancel.cancelled() => Err(Error::Canceled),
                         r = self.upload_block(info.id, 0, Bytes::new(), upload.as_ref(), cancel.clone()) => r,
-                    }.map_err(Error::into_retry_error)
-                },
+                    }
+                }.map_err(Error::into_retry_error),
                 notify_retry,
             )
             .await?;
@@ -681,8 +701,8 @@ where
                                     biased;
                                     _ = cancel.cancelled() => Err(Error::Canceled),
                                     r = inner.upload_block(info.id, block_num, bytes.clone(), upload.as_ref(), cancel.clone()) => r.map(|p| (block_num, p))
-                                }.map_err(Error::into_retry_error)
-                            },
+                                }
+                            }.map_err(Error::into_retry_error),
                             notify_retry,
                         )
                         .await
@@ -710,11 +730,13 @@ where
         // Spawn a retryable operation to finalize the upload
         Retry::spawn_notify(
             self.backend.config().retry_durations(),
-            || async {
-                select! {
-                    biased;
-                    _ = cancel.cancelled() => Err(Error::Canceled),
-                    r = upload.finalize(&parts) => r,
+            || {
+                async {
+                    select! {
+                        biased;
+                        _ = cancel.cancelled() => Err(Error::Canceled),
+                        r = upload.finalize(&parts) => r,
+                    }
                 }
                 .map_err(Error::into_retry_error)
             },
@@ -798,11 +820,13 @@ where
         // Start by walking the given URL for files to download
         let mut entries = Retry::spawn_notify(
             self.inner.backend.config().retry_durations(),
-            || async {
-                select! {
-                    biased;
-                    _ = self.cancel.cancelled() => Err(Error::Canceled),
-                    r = self.inner.backend.walk(source.clone(), false) => r
+            || {
+                async {
+                    select! {
+                        biased;
+                        _ = self.cancel.cancelled() => Err(Error::Canceled),
+                        r = self.inner.backend.walk(source.clone(), false) => r
+                    }
                 }
                 .map_err(Error::into_retry_error)
             },
@@ -938,8 +962,7 @@ where
                         _ = self.cancel.cancelled() => Err(Error::Canceled),
                         r =  self.inner.backend.new_upload(destination.clone(), digest.clone()) => r,
                     }
-                    .map_err(Error::into_retry_error)
-                },
+                }.map_err(Error::into_retry_error),
                 notify_retry,
             )
             .await?,
