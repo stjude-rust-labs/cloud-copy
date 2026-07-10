@@ -155,13 +155,7 @@ where
             .headers()
             .get(header::ETAG)
             .and_then(|v| v.to_str().ok())
-            .and_then(|v| {
-                if v.trim_start().starts_with("W/") {
-                    None
-                } else {
-                    Some(v)
-                }
-            });
+            .filter(|&v| !v.trim_start().starts_with("W/"));
 
         // Get the content length
         let content_length = response
