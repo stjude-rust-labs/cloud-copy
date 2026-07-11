@@ -206,12 +206,21 @@ pub async fn handle_events(
                     }
                     TransferEvent::BlockCompleted { id, block, failed } => {
                         if let Some(transfer) = transfers.get_mut(&id)
-                            && let Some(block) = transfer.block_transfers.get_mut(&block)
+                            && let Some(block) = transfer.block_transfers.remove(&block)
                         {
                             if failed {
                                 transfer.transferred -= block.transferred;
                             }
 
+                            transfer.bar.pb_set_position(transfer.transferred);
+                        }
+                    }
+                    TransferEvent::BlockRestarted { id, block } => {
+                        if let Some(transfer) = transfers.get_mut(&id)
+                            && let Some(block) = transfer.block_transfers.get_mut(&block)
+                        {
+                            transfer.transferred -= block.transferred;
+                            block.transferred = 0;
                             transfer.bar.pb_set_position(transfer.transferred);
                         }
                     }
