@@ -388,7 +388,7 @@ checksum = "c3e64b0cc0439b12df2fa678eae89a1c56a529fd067a9115f7827f1fffd22b32"
 
 [[package]]
 name = "cloud-copy"
-version = "0.9.0"
+version = "0.10.0"
 dependencies = [
  "anyhow",
  "base64",
@@ -1026,13 +1026,12 @@ dependencies = [
 
 [[package]]
 name = "http-cache-stream"
-version = "0.4.0"
+version = "0.5.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "67c489d9adb5c5ad4a2fc0f7c682f370391ee03abd55fd7b029416c2a20c8345"
+checksum = "8d8eec7ff1de297e65b028df92c004c47c1c29b5f3f3a289a06143d662a8f2fd"
 dependencies = [
  "anyhow",
  "bincode",
- "blake3",
  "bytes",
  "cfg-if",
  "futures",
@@ -1055,9 +1054,9 @@ dependencies = [
 
 [[package]]
 name = "http-cache-stream-reqwest"
-version = "0.4.0"
+version = "0.5.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "279f4e7bfe2aa902ad17a595d4815f7204f9052f215ec4e6d97a1e315e9666aa"
+checksum = "65ed6e7c2121f198a21a7949e66672cc1048ff2fd08a5b3f857033bea8a66f8a"
 dependencies = [
  "anyhow",
  "bytes",

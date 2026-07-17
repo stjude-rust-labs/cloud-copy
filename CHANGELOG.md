@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## Unreleased
 
+## 0.10.0 - 07-17-2026
+
 #### Fixed
 
 * Fixed CLI event handling panic when resuming a "restart from beginning"
