@@ -15,7 +15,7 @@ use futures::TryFutureExt;
 use futures::TryStreamExt;
 use futures::stream;
 use http_cache_stream_reqwest::CacheStorage;
-use http_cache_stream_reqwest::X_CACHE_DIGEST;
+use http_cache_stream_reqwest::X_CACHE_KEY;
 use reqwest::StatusCode;
 use reqwest::header;
 use tempfile::NamedTempFile;
@@ -324,13 +324,13 @@ where
 
                             // Check to see if we should link to the cache location
                             if self.backend.config().link_to_cache()
-                                && let Some(digest) = response
+                                && let Some(key) = response
                                     .headers()
-                                    .get(X_CACHE_DIGEST)
+                                    .get(X_CACHE_KEY)
                                     .and_then(|v| v.to_str().ok())
                                 && let Some(cache) = self.backend.cache()
                             {
-                                let path = cache.storage().body_path(digest);
+                                let path = cache.storage().body_path(key);
                                 if path.is_file() {
                                     // Remove the existing temp file and replace it with a hard link
                                     fs::remove_file(info.destination).await.ok();
