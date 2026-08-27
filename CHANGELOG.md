@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## Unreleased
 
+#### Fixed
+
+* Fixed listing blobs on Azure storage accounts without a hierarchical
+  namespace: the `showonly=files` query parameter is only supported on
+  accounts with a hierarchical namespace enabled and caused every listing
+  (and therefore every download) on flat-namespace accounts to fail with
+  status 400 ("one of the query parameters specified in the request URI is
+  not supported"). "Directory" blobs are now excluded from listings
+  client-side via the `ResourceType` blob property instead ([#44](https://github.com/stjude-rust-labs/cloud-copy/pull/44)).
+
 ## 0.10.0 - 07-17-2026
 
 #### Fixed
