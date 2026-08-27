@@ -72,6 +72,17 @@ const AZURE_CONTENT_CRC_HEADER: &str = "x-ms-content-crc64";
 /// The current supported Azure storage version.
 const AZURE_STORAGE_VERSION: &str = "2025-05-05";
 
+/// The page size used when listing to find the first file only.
+///
+/// Larger than one because pages are filtered client-side: on accounts with
+/// a hierarchical namespace, a page may consist entirely of "directory"
+/// blobs (e.g. sibling empty directories or deep directory chains), and an
+/// empty filtered page costs another round trip. At this size, a single
+/// request covers all but pathological layouts, while the response body (a
+/// few hundred bytes per entry) remains negligible next to the round-trip
+/// latency it saves.
+const FIRST_ONLY_PAGE_SIZE: usize = 100;
+
 /// The Azure blob type uploaded by this tool.
 const AZURE_BLOB_TYPE: &str = "BlockBlob";
 
@@ -173,11 +184,26 @@ pub enum AzureError {
 }
 
 /// Represents information about a blob.
+/// Represents the properties of a listed blob.
+#[derive(Debug, Default, Deserialize)]
+struct BlobProperties {
+    /// The resource type of the blob (`file` or `directory`).
+    ///
+    /// Only returned for storage accounts with a hierarchical namespace
+    /// enabled (service version 2020-10-02 and later); absent on
+    /// flat-namespace accounts.
+    #[serde(rename = "ResourceType", default)]
+    resource_type: Option<String>,
+}
+
 #[derive(Debug, Deserialize)]
 struct Blob {
     /// The name of the blob.
     #[serde(rename = "Name")]
     name: String,
+    /// The properties of the blob.
+    #[serde(rename = "Properties", default)]
+    properties: BlobProperties,
 }
 
 /// Represents a list of blobs.
@@ -746,12 +772,18 @@ impl StorageBackend for AzureBlobStorageBackend {
             pairs.append_pair("comp", "list");
             // The prefix to use for listing blobs in the container.
             pairs.append_pair("prefix", &prefix);
-            // Only include files in the output.
-            pairs.append_pair("showonly", "files");
+            // Note: the `showonly=files` parameter is deliberately not used
+            // here: it is only supported for storage accounts with a
+            // hierarchical namespace enabled, and flat-namespace accounts
+            // reject it with a 400 ("one of the query parameters specified
+            // in the request URI is not supported"). "Directory" blobs are
+            // instead filtered out of the results below.
+            // See: https://learn.microsoft.com/en-us/rest/api/storageservices/list-blobs#uri-parameters
 
-            // Only return at most one result if we're returning the first only
+            // Use a small page size when returning the first entry only;
+            // see `FIRST_ONLY_PAGE_SIZE` for why this is larger than one
             if first_only {
-                pairs.append_pair("maxresults", "1");
+                pairs.append_pair("maxresults", &FIRST_ONLY_PAGE_SIZE.to_string());
             }
         }
 
@@ -784,12 +816,22 @@ impl StorageBackend for AzureBlobStorageBackend {
             }
 
             let text = response.text().await?;
-            let results: Results = match serde_xml_rs::from_str(&text) {
+            let mut results: Results = match serde_xml_rs::from_str(&text) {
                 Ok(response) => response,
                 Err(e) => {
                     return Err(AzureError::UnexpectedResponse { status, error: e }.into());
                 }
             };
+
+            // On accounts with a hierarchical namespace enabled, the listing
+            // includes "directory" blobs, which hold metadata such as access
+            // control lists and must not be treated as downloadable files;
+            // exclude them from the results. Flat-namespace accounts never
+            // return a resource type.
+            results
+                .blobs
+                .items
+                .retain(|b| b.properties.resource_type.as_deref() != Some("directory"));
 
             // If there is only one result and the result is an empty path, then the given
             // URL was to a file and not a "directory"
@@ -807,9 +849,19 @@ impl StorageBackend for AzureBlobStorageBackend {
             }));
 
             next = results.next.unwrap_or_default();
-            if first_only || next.is_empty() {
+
+            // When returning the first entry only, keep listing until an
+            // entry survives the directory filtering above or the listing is
+            // exhausted; stopping on the first page could otherwise report a
+            // non-empty "directory" as empty
+            if (first_only && !paths.is_empty()) || next.is_empty() {
                 break;
             }
+        }
+
+        // Only the first entry is returned when requested
+        if first_only {
+            paths.truncate(1);
         }
 
         Ok(paths)
@@ -830,5 +882,91 @@ impl StorageBackend for AzureBlobStorageBackend {
             digest,
             self.events.clone(),
         ))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn listings_deserialize_and_filter_directory_blobs() {
+        // A listing from an account with a hierarchical namespace enabled:
+        // "directory" blobs carry a `ResourceType` of `directory`
+        const HNS_RESPONSE: &str = r#"<?xml version="1.0" encoding="utf-8"?>
+<EnumerationResults ServiceEndpoint="https://account.blob.core.windows.net/" ContainerName="container">
+  <Blobs>
+    <Blob>
+      <Name>prefix/dir</Name>
+      <Properties>
+        <ResourceType>directory</ResourceType>
+        <Content-Length>0</Content-Length>
+      </Properties>
+    </Blob>
+    <Blob>
+      <Name>prefix/dir/file.txt</Name>
+      <Properties>
+        <ResourceType>file</ResourceType>
+        <Content-Length>42</Content-Length>
+      </Properties>
+    </Blob>
+    <Blob>
+      <Name>prefix/other.txt</Name>
+      <Properties>
+        <ResourceType>file</ResourceType>
+        <Content-Length>7</Content-Length>
+      </Properties>
+    </Blob>
+  </Blobs>
+  <NextMarker/>
+</EnumerationResults>"#;
+
+        let mut results: Results =
+            serde_xml_rs::from_str(HNS_RESPONSE).expect("response should parse");
+        assert_eq!(results.blobs.items.len(), 3);
+
+        results
+            .blobs
+            .items
+            .retain(|b| b.properties.resource_type.as_deref() != Some("directory"));
+
+        let names: Vec<_> = results
+            .blobs
+            .items
+            .iter()
+            .map(|b| b.name.as_str())
+            .collect();
+        assert_eq!(names, ["prefix/dir/file.txt", "prefix/other.txt"]);
+    }
+
+    #[test]
+    fn flat_namespace_listings_have_no_resource_type() {
+        // A listing from a flat-namespace account: no `ResourceType` is
+        // returned and every entry must be retained
+        const FLAT_RESPONSE: &str = r#"<?xml version="1.0" encoding="utf-8"?>
+<EnumerationResults ServiceEndpoint="https://account.blob.core.windows.net/" ContainerName="container">
+  <Blobs>
+    <Blob>
+      <Name>prefix/a.txt</Name>
+      <Properties>
+        <Content-Length>1</Content-Length>
+      </Properties>
+    </Blob>
+    <Blob>
+      <Name>prefix/b.txt</Name>
+    </Blob>
+  </Blobs>
+  <NextMarker/>
+</EnumerationResults>"#;
+
+        let mut results: Results =
+            serde_xml_rs::from_str(FLAT_RESPONSE).expect("response should parse");
+        assert_eq!(results.blobs.items.len(), 2);
+
+        results
+            .blobs
+            .items
+            .retain(|b| b.properties.resource_type.as_deref() != Some("directory"));
+        assert_eq!(results.blobs.items.len(), 2);
     }
 }
