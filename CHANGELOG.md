@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## Unreleased
 
+#### Fixed
+
+* Fixed directory uploads failing on broken symlinks by gracefully skipping them instead of aborting the upload.
+* Fixed partial directory uploads not resuming correctly by ignoring existing files instead of aborting when `RemoteDestinationExists` is encountered.
+* Improved error reporting by including the file path in upload errors.
+
 ## 0.10.1 - 08-27-2026
 
 #### Fixed
