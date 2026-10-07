@@ -890,9 +890,27 @@ where
         let source = source.as_ref();
 
         // Recursively walk the path looking for files to upload
-        for entry in WalkDir::new(source) {
-            let entry = entry?;
-            let metadata = entry.metadata()?;
+        let mut iterator = WalkDir::new(source).follow_links(true).into_iter();
+        while let Some(entry) = iterator.next() {
+            let entry = match entry {
+                Ok(e) => e,
+                Err(e) => {
+                    if e.depth() > 0 && e.io_error().map(|io| io.kind()) == Some(std::io::ErrorKind::NotFound) {
+                        continue;
+                    }
+                    return Err(e.into());
+                }
+            };
+            
+            let metadata = match entry.metadata() {
+                Ok(m) => m,
+                Err(e) => {
+                    if entry.depth() > 0 && e.io_error().map(|io| io.kind()) == Some(std::io::ErrorKind::NotFound) {
+                        continue;
+                    }
+                    return Err(e.into());
+                }
+            };
 
             // We're recursively walking the directory; ignore directory entries
             if metadata.is_dir() {
@@ -917,8 +935,23 @@ where
                 .upload_file(entry.path(), destination, metadata.len())
                 .await;
 
-            // Send the transfer completed event
-            result?;
+            // Handle the result
+            match result {
+                Ok(()) => {}
+                Err(Error::RemoteDestinationExists(url)) => {
+                    // If the root source itself is a file, return the error so the caller knows it exists.
+                    // If we are uploading a directory, an existing file is just skipped (resuming partial upload).
+                    if entry.depth() == 0 {
+                        return Err(Error::RemoteDestinationExists(url));
+                    }
+                }
+                Err(e) => {
+                    return Err(Error::UploadFailed {
+                        path: entry.path().to_path_buf(),
+                        error: Box::new(e),
+                    });
+                }
+            }
         }
 
         Ok(())

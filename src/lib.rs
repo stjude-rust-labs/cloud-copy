@@ -512,6 +512,14 @@ pub enum Error {
         /// The error that occurred creating the temporary file.
         error: std::io::Error,
     },
+    /// An upload operation failed for a specific file.
+    #[error("failed to upload `{path}`: {error}")]
+    UploadFailed {
+        /// The path of the file that failed to upload.
+        path: std::path::PathBuf,
+        /// The error that occurred.
+        error: Box<Error>,
+    },
     /// The local destination path already exists.
     #[error("the destination path `{path}` already exists", path = .0.display())]
     LocalDestinationExists(PathBuf),
