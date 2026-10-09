@@ -453,8 +453,8 @@ async fn roundtrip_directory() -> Result<()> {
         .await
         .context("failed to upload directory")?;
 
-        // Copy the directory from the cloud to a local directory (delete it first in
-        // case it exists)
+        // Copy the directory from the cloud to a local directory (delete it
+        // first in case it exists)
         fs::remove_dir_all(destination.path()).context("failed to delete destination directory")?;
         cloud_copy::copy(
             config.clone(),
@@ -490,7 +490,8 @@ async fn roundtrip_directory() -> Result<()> {
             match (source.is_dir(), destination.is_dir()) {
                 (true, true) => continue,
                 (false, false) => {
-                    // Ensure the uploaded file and the downloaded file are the same
+                    // Ensure the uploaded file and the downloaded file are the
+                    // same
                     if !same_file_content(&source, &destination)
                         .await
                         .context("failed to compare files")?
@@ -833,7 +834,8 @@ async fn digests() -> Result<()> {
                 cloud_copy::get_content_digest(config.clone(), client.clone(), url.clone()).await?;
             match (&expected_digest, &digest) {
                 (None, Some(ContentDigest::ETag(v))) => {
-                    // The emulators return an `ETag` header for the objects; ensure it is always a
+                    // The emulators return an `ETag` header for the objects;
+                    // ensure it is always a
                     // strong validator
                     assert!(!v.starts_with("W/"));
                 }
@@ -876,7 +878,8 @@ async fn exists() -> Result<()> {
         .context("failed to upload directory")?;
     }
 
-    // Walk each directory entry (including sub directories) and check for existence
+    // Walk each directory entry (including sub directories) and check for
+    // existence
     for entry in WalkDir::new(source.path()) {
         let entry = entry.context("walk should succeed")?;
         let path = entry

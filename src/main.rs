@@ -238,14 +238,14 @@ async fn run(cancel: CancellationToken) -> Result<()> {
     {
         Ok(filter) => filter,
         Err(e) => {
-            // If there was an error and the variable was set, then the error was due to
-            // parsing an invalid directive
+            // If there was an error and the variable was set, then the error
+            // was due to parsing an invalid directive
             if std::env::var("RUST_LOG").is_ok() {
                 return Err(e);
             }
 
-            // Otherwise, use a default directive env filter that disables noisy hyper
-            // output
+            // Otherwise, use a default directive env filter that disables noisy
+            // hyper output
             EnvFilter::builder()
                 .with_default_directive(LevelFilter::from(args.verbosity).into())
                 .from_env_lossy()
