@@ -181,14 +181,16 @@ where
                     error,
                 })?;
 
-            // Use a temp file that will be atomically renamed when the download completes
+            // Use a temp file that will be atomically renamed when the download
+            // completes
             let temp = NamedTempFile::with_prefix_in(".copy", parent)
                 .map_err(|error| Error::CreateTempFile { error })?
                 .into_temp_path();
 
-            // Check to see if we can transfer the file in blocks; this requires a known
-            // file size (> 0), a strong etag, the server to accept ranged requests, and
-            // that we're not using a cache as our cache implementation does not
+            // Check to see if we can transfer the file in blocks; this requires
+            // a known file size (> 0), a strong etag, the server to
+            // accept ranged requests, and that we're not using a
+            // cache as our cache implementation does not
             // support ranged requests.
             match (accept_ranges, content_length, etag) {
                 (true, Some(content_length), Some(etag))
@@ -305,7 +307,8 @@ where
         let transfer = async {
             let offset = AtomicU64::new(0);
 
-            // Retry the download with resume (if server accepts ranged requests)
+            // Retry the download with resume (if server accepts ranged
+            // requests)
             Retry::spawn_notify(
                 self.backend.config().retry_durations(),
                 || {
@@ -322,7 +325,8 @@ where
                         } else {
                             let response = self.backend.get(info.source.clone()).await?;
 
-                            // Check to see if we should link to the cache location
+                            // Check to see if we should link to the cache
+                            // location
                             if self.backend.config().link_to_cache()
                                 && let Some(key) = response
                                     .headers()
@@ -332,7 +336,8 @@ where
                             {
                                 let path = cache.storage().body_path(key);
                                 if path.is_file() {
-                                    // Remove the existing temp file and replace it with a hard link
+                                    // Remove the existing temp file and replace
+                                    // it with a hard link
                                     fs::remove_file(info.destination).await.ok();
                                     match fs::hard_link(&path, info.destination).await {
                                         Ok(_) => {
@@ -355,7 +360,8 @@ where
                             response
                         };
 
-                        // If the response is not partial, start from the beginning
+                        // If the response is not partial, start from the
+                        // beginning
                         if response.status() != StatusCode::PARTIAL_CONTENT {
                             if current > 0 {
                                 debug!(
@@ -376,7 +382,8 @@ where
 
                             current = 0;
                         } else {
-                            // Ensure the response starts at the requested position
+                            // Ensure the response starts at the requested
+                            // position
                             if !response
                                 .headers()
                                 .get(header::CONTENT_RANGE)
@@ -417,13 +424,14 @@ where
                         let mut writer = BufWriter::new(file);
 
                         // Copy the response stream to the temp file
-                        // If there is an error, update the current offset so that we resume on next
-                        // retry
+                        // If there is an error, update the current offset so
+                        // that we resume on next retry
                         if let Err(e) = tokio::io::copy(&mut reader, &mut writer)
                             .await
                             .map_err(Error::from)
                         {
-                            // Flush the writer and determine how much was written
+                            // Flush the writer and determine how much was
+                            // written
                             writer.flush().await.map_err(Error::from)?;
                             let written = writer
                                 .seek(SeekFrom::Current(0))
@@ -579,7 +587,8 @@ where
                 )
                 .await?;
 
-            // We expect partial content, otherwise treat as remote content modified
+            // We expect partial content, otherwise treat as remote content
+            // modified
             if response.status() != StatusCode::PARTIAL_CONTENT {
                 return Err(Error::RemoteContentModified);
             }
@@ -843,7 +852,8 @@ where
         let permits = Arc::new(Semaphore::new(self.inner.backend.config().parallelism()));
         let mut set = JoinSet::new();
 
-        // If there are no files relative to the given URL, download just the given URL
+        // If there are no files relative to the given URL, download just the
+        // given URL
         if entries.is_empty() {
             let inner = self.inner.clone();
             let destination = destination.to_path_buf();
@@ -859,7 +869,8 @@ where
                 let permits = permits.clone();
                 let cancel = self.cancel.clone();
 
-                // Adjust source and destination based on the provided relative URL path
+                // Adjust source and destination based on the provided relative
+                // URL path
                 {
                     let mut segments = source.path_segments_mut().expect("URL should have a path");
                     segments.pop_if_empty();
@@ -890,22 +901,25 @@ where
         let source = source.as_ref();
 
         // Recursively walk the path looking for files to upload
-        let mut iterator = WalkDir::new(source).follow_links(true).into_iter();
-        while let Some(entry) = iterator.next() {
+        for entry in WalkDir::new(source).follow_links(true) {
             let entry = match entry {
                 Ok(e) => e,
                 Err(e) => {
-                    if e.depth() > 0 && e.io_error().map(|io| io.kind()) == Some(std::io::ErrorKind::NotFound) {
+                    if e.depth() > 0
+                        && e.io_error().map(|io| io.kind()) == Some(std::io::ErrorKind::NotFound)
+                    {
                         continue;
                     }
                     return Err(e.into());
                 }
             };
-            
+
             let metadata = match entry.metadata() {
                 Ok(m) => m,
                 Err(e) => {
-                    if entry.depth() > 0 && e.io_error().map(|io| io.kind()) == Some(std::io::ErrorKind::NotFound) {
+                    if entry.depth() > 0
+                        && e.io_error().map(|io| io.kind()) == Some(std::io::ErrorKind::NotFound)
+                    {
                         continue;
                     }
                     return Err(e.into());
@@ -939,8 +953,10 @@ where
             match result {
                 Ok(()) => {}
                 Err(Error::RemoteDestinationExists(url)) => {
-                    // If the root source itself is a file, return the error so the caller knows it exists.
-                    // If we are uploading a directory, an existing file is just skipped (resuming partial upload).
+                    // If the root source itself is a file, return the error so
+                    // the caller knows it exists. If we are
+                    // uploading a directory, an existing file is just skipped
+                    // (resuming partial upload).
                     if entry.depth() == 0 {
                         return Err(Error::RemoteDestinationExists(url));
                     }
@@ -978,8 +994,8 @@ where
             .await?;
 
         // Create the upload (retryable)
-        // This is performed before we send transfer events in case the resource already
-        // exists and we're not overwriting
+        // This is performed before we send transfer events in case the resource
+        // already exists and we're not overwriting
         let upload = Arc::new(
             Retry::spawn_notify(
                 self.inner.backend.config().retry_durations(),

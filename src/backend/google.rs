@@ -463,8 +463,8 @@ impl StorageBackend for GoogleStorageBackend {
             num_blocks += BLOCK_COUNT_INCREMENT;
         }
 
-        // Couldn't fit the number of blocks within the size threshold; fallback to
-        // whatever will fit
+        // Couldn't fit the number of blocks within the size threshold; fallback
+        // to whatever will fit
         let block_size: u64 = file_size.div_ceil(MAX_PARTS);
         if block_size > MAX_PART_SIZE {
             return Err(GoogleError::MaximumSizeExceeded.into());
@@ -575,7 +575,8 @@ impl StorageBackend for GoogleStorageBackend {
 
         let response = self.client.execute(request).await?;
         if !response.status().is_success() {
-            // If the resource isn't required to exist and it's a 404, return the response.
+            // If the resource isn't required to exist and it's a 404, return
+            // the response.
             if !must_exist && response.status() == StatusCode::NOT_FOUND {
                 return Ok(response);
             }
@@ -757,8 +758,8 @@ impl StorageBackend for GoogleStorageBackend {
                 }
             };
 
-            // If there is only one result and the result is an empty path, then the given
-            // URL was to a file and not a "directory"
+            // If there is only one result and the result is an empty path, then
+            // the given URL was to a file and not a "directory"
             if paths.is_empty()
                 && results.contents.len() == 1
                 && results.token.is_none()

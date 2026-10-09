@@ -52,9 +52,10 @@ impl BufferPool {
     pub fn alloc(&self, size: usize) -> BufferGuard {
         let mut buffer = self.0.clone().get_rc();
 
-        // Resize the buffer; this will only allocate if the buffer is new or if the
-        // block size has increased from the last allocation; this can occur if we're
-        // uploading multiple files and a later file has a larger calculated block size.
+        // Resize the buffer; this will only allocate if the buffer is new or if
+        // the block size has increased from the last allocation; this
+        // can occur if we're uploading multiple files and a later file
+        // has a larger calculated block size.
         buffer.resize(size, 0);
         buffer
     }
@@ -76,6 +77,7 @@ impl BufferPool {
         let mut buffer = self.alloc(block_size.try_into().expect("block size too large"));
 
         // Increment the file offset that will be read
+        #[allow(deprecated)]
         let offset = match offset.fetch_update(Ordering::SeqCst, Ordering::SeqCst, |offset| {
             if offset >= source_size {
                 None

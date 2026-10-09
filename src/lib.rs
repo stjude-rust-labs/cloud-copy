@@ -98,7 +98,8 @@ const BLOCK_SIZE_THRESHOLD: u64 = 256 * ONE_MEBIBYTE;
 
 /// Helper for notifying that a network operation failed and will be retried.
 fn notify_retry(e: &Error, duration: Duration) {
-    // Duration of 0 indicates the first attempt; only print the message for a retry
+    // Duration of 0 indicates the first attempt; only print the message for a
+    // retry
     if !duration.is_zero() {
         let secs = duration.as_secs();
         warn!(
@@ -148,8 +149,8 @@ fn sort_walk_entries(url: &Url, entries: &mut [String]) -> Result<()> {
             });
         }
 
-        // Ensure the next entry in the sorted list is not prefixed with this entry,
-        // otherwise a file conflicts with a directory
+        // Ensure the next entry in the sorted list is not prefixed with this
+        // entry, otherwise a file conflicts with a directory
         if let Some(next) = iter.peek()
             && next
                 .strip_prefix(entry)
@@ -912,7 +913,8 @@ pub fn rewrite_url<'a>(config: &Config, url: &'a Url) -> Result<Cow<'a, Url>> {
 pub async fn walk(config: Config, client: HttpClient, mut url: Url) -> Result<Vec<String>> {
     if let Ok(mut segments) = url.path_segments_mut() {
         // Push an empty segment to treat the URL as a directory
-        // This ensures there is no leading slash in the returned relative paths.
+        // This ensures there is no leading slash in the returned relative
+        // paths.
         segments.pop_if_empty().push("");
     }
 
