@@ -77,8 +77,7 @@ impl BufferPool {
         let mut buffer = self.alloc(block_size.try_into().expect("block size too large"));
 
         // Increment the file offset that will be read
-        #[allow(deprecated)]
-        let offset = match offset.fetch_update(Ordering::SeqCst, Ordering::SeqCst, |offset| {
+        let offset = match offset.try_update(Ordering::SeqCst, Ordering::SeqCst, |offset| {
             if offset >= source_size {
                 None
             } else {
