@@ -494,8 +494,8 @@ impl StorageBackend for AzureBlobStorageBackend {
             num_blocks += BLOCK_COUNT_INCREMENT;
         }
 
-        // Couldn't fit the number of blocks within the size threshold; fallback to
-        // whatever will fit
+        // Couldn't fit the number of blocks within the size threshold; fallback
+        // to whatever will fit
         let block_size: u64 = file_size.div_ceil(MAX_BLOCK_COUNT);
         if block_size > MAX_BLOCK_SIZE {
             return Err(AzureError::MaximumSizeExceeded.into());
@@ -565,8 +565,8 @@ impl StorageBackend for AzureBlobStorageBackend {
     fn join_url<'a>(&self, mut url: Url, segments: impl Iterator<Item = &'a str>) -> Result<Url> {
         let mut segments = segments.peekable();
 
-        // Check to see if we're joining a path to the root container; that's not
-        // supported
+        // Check to see if we're joining a path to the root container; that's
+        // not supported
         let mut existing = url.path_segments().expect("URL should have path");
         if let (Some(first), None) = (existing.next(), existing.next())
             && !first.is_empty()
@@ -609,7 +609,8 @@ impl StorageBackend for AzureBlobStorageBackend {
 
         let response = self.client.execute(request).await?;
         if !response.status().is_success() {
-            // If the resource isn't required to exist and it's a 404, return the response.
+            // If the resource isn't required to exist and it's a 404, return
+            // the response.
             if !must_exist && response.status() == StatusCode::NOT_FOUND {
                 return Ok(response);
             }
@@ -710,15 +711,16 @@ impl StorageBackend for AzureBlobStorageBackend {
 
         let mut container = url.clone();
 
-        // Clear the path segments for the list request; we only want the container name
+        // Clear the path segments for the list request; we only want the
+        // container name
         let mut prefix = {
             let mut container_segments = container
                 .path_segments_mut()
                 .expect("URL should have a path");
             container_segments.clear();
 
-            // Start by treating the first path segment as the container to list the
-            // contents of
+            // Start by treating the first path segment as the container to list
+            // the contents of
             let mut source_segments = url.path_segments().expect("URL should have a path");
             let name = source_segments.next().ok_or(AzureError::BlobNameMissing)?;
             container_segments.push(name);
@@ -792,7 +794,8 @@ impl StorageBackend for AzureBlobStorageBackend {
         loop {
             let mut url = container.clone();
             if !next.is_empty() {
-                // The marker to start listing from, returned by the previous query
+                // The marker to start listing from, returned by the previous
+                // query
                 url.query_pairs_mut().append_pair("marker", &next);
             }
 
@@ -833,8 +836,8 @@ impl StorageBackend for AzureBlobStorageBackend {
                 .items
                 .retain(|b| b.properties.resource_type.as_deref() != Some("directory"));
 
-            // If there is only one result and the result is an empty path, then the given
-            // URL was to a file and not a "directory"
+            // If there is only one result and the result is an empty path, then
+            // the given URL was to a file and not a "directory"
             if paths.is_empty()
                 && results.blobs.items.len() == 1
                 && results.next.is_none()

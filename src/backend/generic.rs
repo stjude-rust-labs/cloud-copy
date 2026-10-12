@@ -150,7 +150,8 @@ impl StorageBackend for GenericStorageBackend {
             .await?;
 
         if !response.status().is_success() {
-            // If the resource isn't required to exist and it's a 404, return the response.
+            // If the resource isn't required to exist and it's a 404, return
+            // the response.
             if !must_exist && response.status() == StatusCode::NOT_FOUND {
                 return Ok(response);
             }

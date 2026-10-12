@@ -185,13 +185,15 @@ impl<'a> RequestSigner<'a> {
         for (k, v) in microsoft_headers {
             let value = v.to_str().expect("expected a string value");
 
-            // The whitespace normalization of canonical header values requires that the
-            // string be trimmed and consecutive whitespace replaced with a single space
-            // (but also preserve whitespace in "quoted strings").
+            // The whitespace normalization of canonical header values requires
+            // that the string be trimmed and consecutive whitespace
+            // replaced with a single space (but also preserve
+            // whitespace in "quoted strings").
             //
-            // As we don't currently send any canonical header values with whitespace,
-            // this ensures that remains the case. If this assert fires, we'll need to
-            // implement the whitespace normalization.
+            // As we don't currently send any canonical header values with
+            // whitespace, this ensures that remains the case. If
+            // this assert fires, we'll need to implement the
+            // whitespace normalization.
             debug_assert!(
                 !value.chars().any(|c| c.is_whitespace()),
                 "canonical Azure header contains whitespace"
