@@ -8,6 +8,7 @@ authors = ["St. Jude Rust Labs"]
 homepage = "https://github.com/stjude-rust-labs/cloud-copy"
 repository = "https://github.com/stjude-rust-labs/cloud-copy"
 rust-version = "1.95.0"
+
 [package.metadata.docs.rs]
 all-features = true
 
