@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## Unreleased
 
+#### Changed
+
+* Updated `size`, `walk`, `exists`, and `digest` to accept a cancellation token ([#42](https://github.com/stjude-rust-labs/cloud-copy/issues/42)).
+* Renamed `get_content_digest` to `digest` and deprecated `get_content_digest` ([#42](https://github.com/stjude-rust-labs/cloud-copy/issues/42)).
+
 #### Fixed
 
 * Fixed directory uploads failing on broken symlinks by gracefully skipping them instead of aborting the upload ([#46](https://github.com/stjude-rust-labs/cloud-copy/pull/46)).
