@@ -766,7 +766,7 @@ async fn walk() -> Result<()> {
             .context("failed to upload file")?;
         }
 
-        let files = cloud_copy::walk(config.clone(), client.clone(), url.clone())
+        let files = cloud_copy::walk(config.clone(), client.clone(), url.clone(), cancel.clone())
             .await
             .expect("should walk");
         assert_eq!(
@@ -831,7 +831,8 @@ async fn digests() -> Result<()> {
             .context("failed to upload file")?;
 
             let digest =
-                cloud_copy::get_content_digest(config.clone(), client.clone(), url.clone()).await?;
+                cloud_copy::digest(config.clone(), client.clone(), url.clone(), cancel.clone())
+                    .await?;
             match (&expected_digest, &digest) {
                 (None, Some(ContentDigest::ETag(v))) => {
                     // The emulators return an `ETag` header for the objects;
@@ -897,15 +898,17 @@ async fn exists() -> Result<()> {
                 .join(path.as_os_str().to_str().context("should be UTF-8")?)
                 .context("url should join")?;
 
-            let exists = cloud_copy::exists(config.clone(), client.clone(), url.clone())
-                .await
-                .context("checking for existence")?;
+            let exists =
+                cloud_copy::exists(config.clone(), client.clone(), url.clone(), cancel.clone())
+                    .await
+                    .context("checking for existence")?;
             assert!(exists, "URL `{url}` should exist");
 
             let url = url.join("does-not-exist").context("url should join")?;
-            let exists = cloud_copy::exists(config.clone(), client.clone(), url.clone())
-                .await
-                .context("checking for existence")?;
+            let exists =
+                cloud_copy::exists(config.clone(), client.clone(), url.clone(), cancel.clone())
+                    .await
+                    .context("checking for existence")?;
             assert!(!exists, "URL `{url}` should not exist");
         }
     }
@@ -915,7 +918,8 @@ async fn exists() -> Result<()> {
         cloud_copy::exists(
             config.clone(),
             client.clone(),
-            "https://google.com".parse().context("should parse")?
+            "https://google.com".parse().context("should parse")?,
+            cancel.clone(),
         )
         .await
         .context("checking for existence")?
@@ -924,7 +928,8 @@ async fn exists() -> Result<()> {
         !cloud_copy::exists(
             config.clone(),
             client.clone(),
-            "https://google.com/404".parse().context("should parse")?
+            "https://google.com/404".parse().context("should parse")?,
+            cancel.clone(),
         )
         .await
         .context("checking for existence")?
@@ -966,7 +971,7 @@ async fn size() -> Result<()> {
         .context("failed to upload directory")?;
 
         // Check the file size matches
-        let size = cloud_copy::size(config.clone(), client.clone(), url).await?;
+        let size = cloud_copy::size(config.clone(), client.clone(), url, cancel.clone()).await?;
         assert_eq!(size, Some(FILE_SIZE));
     }
 

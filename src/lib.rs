@@ -45,6 +45,7 @@ use sha2::Sha256;
 use tokio::fs::OpenOptions;
 use tokio::io::BufReader;
 use tokio::io::BufWriter;
+use tokio::select;
 use tokio::sync::broadcast;
 use tokio_retry2::RetryError;
 use tokio_util::io::ReaderStream;
@@ -910,7 +911,16 @@ pub fn rewrite_url<'a>(config: &Config, url: &'a Url) -> Result<Cow<'a, Url>> {
 /// URL.
 ///
 /// If the given storage URL is not a directory, an empty list is returned.
-pub async fn walk(config: Config, client: HttpClient, mut url: Url) -> Result<Vec<String>> {
+pub async fn walk(
+    config: Config,
+    client: HttpClient,
+    mut url: Url,
+    cancel: CancellationToken,
+) -> Result<Vec<String>> {
+    if cancel.is_cancelled() {
+        return Err(Error::Canceled);
+    }
+
     if let Ok(mut segments) = url.path_segments_mut() {
         // Push an empty segment to treat the URL as a directory
         // This ensures there is no leading slash in the returned relative
@@ -918,24 +928,30 @@ pub async fn walk(config: Config, client: HttpClient, mut url: Url) -> Result<Ve
         segments.pop_if_empty().push("");
     }
 
-    let mut entries = if AzureBlobStorageBackend::is_supported_url(&config, &url) {
-        let url = AzureBlobStorageBackend::rewrite_url(&config, &url)?;
-        AzureBlobStorageBackend::new(config, client, None)
-            .walk(url.into_owned(), false)
-            .await
-    } else if S3StorageBackend::is_supported_url(&config, &url) {
-        let url = S3StorageBackend::rewrite_url(&config, &url)?;
-        S3StorageBackend::new(config, client, None)
-            .walk(url.into_owned(), false)
-            .await
-    } else if GoogleStorageBackend::is_supported_url(&config, &url) {
-        let url = GoogleStorageBackend::rewrite_url(&config, &url)?;
-        GoogleStorageBackend::new(config, client, None)
-            .walk(url.into_owned(), false)
-            .await
-    } else {
-        Err(Error::UnsupportedUrl(url.clone()))
-    }?;
+    let mut entries = select! {
+        biased;
+        _ = cancel.cancelled() => return Err(Error::Canceled),
+        entries = async {
+            if AzureBlobStorageBackend::is_supported_url(&config, &url) {
+                let url = AzureBlobStorageBackend::rewrite_url(&config, &url)?;
+                AzureBlobStorageBackend::new(config, client, None)
+                    .walk(url.into_owned(), false)
+                    .await
+            } else if S3StorageBackend::is_supported_url(&config, &url) {
+                let url = S3StorageBackend::rewrite_url(&config, &url)?;
+                S3StorageBackend::new(config, client, None)
+                    .walk(url.into_owned(), false)
+                    .await
+            } else if GoogleStorageBackend::is_supported_url(&config, &url) {
+                let url = GoogleStorageBackend::rewrite_url(&config, &url)?;
+                GoogleStorageBackend::new(config, client, None)
+                    .walk(url.into_owned(), false)
+                    .await
+            } else {
+                Err(Error::UnsupportedUrl(url.clone()))
+            }
+        } => entries?,
+    };
 
     // Sort the entries
     sort_walk_entries(&url, &mut entries)?;
@@ -995,43 +1011,48 @@ impl ContentDigest {
 /// Returns `Ok(None)` if the resource does not have a known content digest.
 ///
 /// [content-digest]: https://developer.mozilla.org/en-US/docs/Web/HTTP/Reference/Headers/Content-Digest
-pub async fn get_content_digest(
+pub async fn digest(
     config: Config,
     client: HttpClient,
     url: Url,
+    cancel: CancellationToken,
 ) -> Result<Option<ContentDigest>> {
+    if cancel.is_cancelled() {
+        return Err(Error::Canceled);
+    }
+
     // Issue the `HEAD` request
-    let (response, metadata) = if AzureBlobStorageBackend::is_supported_url(&config, &url) {
-        let url = AzureBlobStorageBackend::rewrite_url(&config, &url)?;
-        (
-            AzureBlobStorageBackend::new(config, client, None)
-                .head(url.into_owned(), true)
-                .await?,
-            Some(AZURE_CONTENT_DIGEST_HEADER),
-        )
-    } else if S3StorageBackend::is_supported_url(&config, &url) {
-        let url = S3StorageBackend::rewrite_url(&config, &url)?;
-        (
-            S3StorageBackend::new(config, client, None)
-                .head(url.into_owned(), true)
-                .await?,
-            Some(AWS_CONTENT_DIGEST_HEADER),
-        )
-    } else if GoogleStorageBackend::is_supported_url(&config, &url) {
-        let url = GoogleStorageBackend::rewrite_url(&config, &url)?;
-        (
-            GoogleStorageBackend::new(config, client, None)
-                .head(url.into_owned(), true)
-                .await?,
-            Some(GOOGLE_CONTENT_DIGEST_HEADER),
-        )
-    } else {
-        (
-            GenericStorageBackend::new(config, client, None)
-                .head(url, true)
-                .await?,
-            None,
-        )
+    let (response, metadata) = select! {
+        biased;
+        _ = cancel.cancelled() => return Err(Error::Canceled),
+        res = async {
+            let res: Result<(reqwest::Response, Option<&'static str>)> =
+                if AzureBlobStorageBackend::is_supported_url(&config, &url) {
+                    let url = AzureBlobStorageBackend::rewrite_url(&config, &url)?;
+                    let response = AzureBlobStorageBackend::new(config, client, None)
+                        .head(url.into_owned(), true)
+                        .await?;
+                    Ok((response, Some(AZURE_CONTENT_DIGEST_HEADER)))
+                } else if S3StorageBackend::is_supported_url(&config, &url) {
+                    let url = S3StorageBackend::rewrite_url(&config, &url)?;
+                    let response = S3StorageBackend::new(config, client, None)
+                        .head(url.into_owned(), true)
+                        .await?;
+                    Ok((response, Some(AWS_CONTENT_DIGEST_HEADER)))
+                } else if GoogleStorageBackend::is_supported_url(&config, &url) {
+                    let url = GoogleStorageBackend::rewrite_url(&config, &url)?;
+                    let response = GoogleStorageBackend::new(config, client, None)
+                        .head(url.into_owned(), true)
+                        .await?;
+                    Ok((response, Some(GOOGLE_CONTENT_DIGEST_HEADER)))
+                } else {
+                    let response = GenericStorageBackend::new(config, client, None)
+                        .head(url, true)
+                        .await?;
+                    Ok((response, None))
+                };
+            res
+        } => res?,
     };
 
     // Check for `Content-Digest` header first
@@ -1057,50 +1078,78 @@ pub async fn get_content_digest(
     Ok(None)
 }
 
+/// Retrieves the known content digest of the given URL.
+///
+/// Deprecated: use [`digest`] instead.
+#[deprecated(note = "use `digest` instead")]
+pub async fn get_content_digest(
+    config: Config,
+    client: HttpClient,
+    url: Url,
+    cancel: CancellationToken,
+) -> Result<Option<ContentDigest>> {
+    digest(config, client, url, cancel).await
+}
+
 /// Determines if the given URL exists.
 ///
 /// Returns `Ok(true)` if a HEAD request returns success or if a walk of the
 /// URL returns at least one contained URL.
-pub async fn exists(config: Config, client: HttpClient, url: Url) -> Result<bool> {
+pub async fn exists(
+    config: Config,
+    client: HttpClient,
+    url: Url,
+    cancel: CancellationToken,
+) -> Result<bool> {
+    if cancel.is_cancelled() {
+        return Err(Error::Canceled);
+    }
+
     // Check for local file
     if url.scheme() == "file" {
         let path = url.to_file_path().map_err(|_| Error::InvalidFileUrl(url))?;
         return Ok(path.exists());
     }
 
-    if AzureBlobStorageBackend::is_supported_url(&config, &url) {
-        let url = AzureBlobStorageBackend::rewrite_url(&config, &url)?;
-        let backend = AzureBlobStorageBackend::new(config, client, None);
-        let response = backend.head(url.as_ref().clone(), false).await?;
-        if response.status().is_success() {
-            return Ok(true);
-        }
+    select! {
+        biased;
+        _ = cancel.cancelled() => Err(Error::Canceled),
+        res = async {
+            if AzureBlobStorageBackend::is_supported_url(&config, &url) {
+                let url = AzureBlobStorageBackend::rewrite_url(&config, &url)?;
+                let backend = AzureBlobStorageBackend::new(config, client, None);
+                let response = backend.head(url.as_ref().clone(), false).await?;
+                if response.status().is_success() {
+                    return Ok(true);
+                }
 
-        // Check for a directory URL
-        Ok(!backend.walk(url.into_owned(), true).await?.is_empty())
-    } else if S3StorageBackend::is_supported_url(&config, &url) {
-        let url = S3StorageBackend::rewrite_url(&config, &url)?;
-        let backend = S3StorageBackend::new(config, client, None);
-        let response = backend.head(url.as_ref().clone(), false).await?;
-        if response.status().is_success() {
-            return Ok(true);
-        }
+                // Check for a directory URL
+                Ok(!backend.walk(url.into_owned(), true).await?.is_empty())
+            } else if S3StorageBackend::is_supported_url(&config, &url) {
+                let url = S3StorageBackend::rewrite_url(&config, &url)?;
+                let backend = S3StorageBackend::new(config, client, None);
+                let response = backend.head(url.as_ref().clone(), false).await?;
+                if response.status().is_success() {
+                    return Ok(true);
+                }
 
-        // Check for a directory URL
-        Ok(!backend.walk(url.into_owned(), true).await?.is_empty())
-    } else if GoogleStorageBackend::is_supported_url(&config, &url) {
-        let url = GoogleStorageBackend::rewrite_url(&config, &url)?;
-        let backend = GoogleStorageBackend::new(config, client, None);
-        let response = backend.head(url.as_ref().clone(), false).await?;
-        if response.status().is_success() {
-            return Ok(true);
-        }
+                // Check for a directory URL
+                Ok(!backend.walk(url.into_owned(), true).await?.is_empty())
+            } else if GoogleStorageBackend::is_supported_url(&config, &url) {
+                let url = GoogleStorageBackend::rewrite_url(&config, &url)?;
+                let backend = GoogleStorageBackend::new(config, client, None);
+                let response = backend.head(url.as_ref().clone(), false).await?;
+                if response.status().is_success() {
+                    return Ok(true);
+                }
 
-        // Check for a directory URL
-        Ok(!backend.walk(url.into_owned(), true).await?.is_empty())
-    } else {
-        let backend = GenericStorageBackend::new(config, client, None);
-        Ok(backend.head(url, false).await?.status().is_success())
+                // Check for a directory URL
+                Ok(!backend.walk(url.into_owned(), true).await?.is_empty())
+            } else {
+                let backend = GenericStorageBackend::new(config, client, None);
+                Ok(backend.head(url, false).await?.status().is_success())
+            }
+        } => res,
     }
 }
 
@@ -1110,7 +1159,16 @@ pub async fn exists(config: Config, client: HttpClient, url: Url) -> Result<bool
 ///
 /// Returns `Ok(None)` if the URL is valid but the size cannot be
 /// determined.
-pub async fn size(config: Config, client: HttpClient, url: Url) -> Result<Option<u64>> {
+pub async fn size(
+    config: Config,
+    client: HttpClient,
+    url: Url,
+    cancel: CancellationToken,
+) -> Result<Option<u64>> {
+    if cancel.is_cancelled() {
+        return Err(Error::Canceled);
+    }
+
     // Check for local file
     if url.scheme() == "file" {
         let path = url.to_file_path().map_err(|_| Error::InvalidFileUrl(url))?;
@@ -1118,21 +1176,27 @@ pub async fn size(config: Config, client: HttpClient, url: Url) -> Result<Option
         return Ok(Some(metadata.len()));
     }
 
-    let response = if AzureBlobStorageBackend::is_supported_url(&config, &url) {
-        let url = AzureBlobStorageBackend::rewrite_url(&config, &url)?;
-        let backend = AzureBlobStorageBackend::new(config, client, None);
-        backend.head(url.as_ref().clone(), true).await?
-    } else if S3StorageBackend::is_supported_url(&config, &url) {
-        let url = S3StorageBackend::rewrite_url(&config, &url)?;
-        let backend = S3StorageBackend::new(config, client, None);
-        backend.head(url.as_ref().clone(), true).await?
-    } else if GoogleStorageBackend::is_supported_url(&config, &url) {
-        let url = GoogleStorageBackend::rewrite_url(&config, &url)?;
-        let backend = GoogleStorageBackend::new(config, client, None);
-        backend.head(url.as_ref().clone(), true).await?
-    } else {
-        let backend = GenericStorageBackend::new(config, client, None);
-        backend.head(url, false).await?
+    let response = select! {
+        biased;
+        _ = cancel.cancelled() => return Err(Error::Canceled),
+        res = async {
+            if AzureBlobStorageBackend::is_supported_url(&config, &url) {
+                let url = AzureBlobStorageBackend::rewrite_url(&config, &url)?;
+                let backend = AzureBlobStorageBackend::new(config, client, None);
+                backend.head(url.as_ref().clone(), true).await
+            } else if S3StorageBackend::is_supported_url(&config, &url) {
+                let url = S3StorageBackend::rewrite_url(&config, &url)?;
+                let backend = S3StorageBackend::new(config, client, None);
+                backend.head(url.as_ref().clone(), true).await
+            } else if GoogleStorageBackend::is_supported_url(&config, &url) {
+                let url = GoogleStorageBackend::rewrite_url(&config, &url)?;
+                let backend = GoogleStorageBackend::new(config, client, None);
+                backend.head(url.as_ref().clone(), true).await
+            } else {
+                let backend = GenericStorageBackend::new(config, client, None);
+                backend.head(url, false).await
+            }
+        } => res?,
     };
 
     Ok(response
@@ -1206,5 +1270,91 @@ mod test {
                 .as_str(),
             "http://foo.s3.us-east-1.localhost:4566/bar/baz",
         );
+    }
+
+    #[tokio::test]
+    #[allow(deprecated)]
+    async fn operations_cancellation() {
+        let config = Config::default();
+        let client = HttpClient::default();
+        let cancel = CancellationToken::new();
+        cancel.cancel();
+
+        // Local file URLs
+        let local_url: Url = "file:///tmp/does-not-matter".parse().unwrap();
+        assert!(matches!(
+            size(
+                config.clone(),
+                client.clone(),
+                local_url.clone(),
+                cancel.clone()
+            )
+            .await,
+            Err(Error::Canceled)
+        ));
+        assert!(matches!(
+            exists(
+                config.clone(),
+                client.clone(),
+                local_url.clone(),
+                cancel.clone()
+            )
+            .await,
+            Err(Error::Canceled)
+        ));
+
+        // Remote URLs
+        let remote_url: Url = "https://example.com/test".parse().unwrap();
+        assert!(matches!(
+            size(
+                config.clone(),
+                client.clone(),
+                remote_url.clone(),
+                cancel.clone()
+            )
+            .await,
+            Err(Error::Canceled)
+        ));
+        assert!(matches!(
+            exists(
+                config.clone(),
+                client.clone(),
+                remote_url.clone(),
+                cancel.clone()
+            )
+            .await,
+            Err(Error::Canceled)
+        ));
+        assert!(matches!(
+            digest(
+                config.clone(),
+                client.clone(),
+                remote_url.clone(),
+                cancel.clone()
+            )
+            .await,
+            Err(Error::Canceled)
+        ));
+        assert!(matches!(
+            walk(
+                config.clone(),
+                client.clone(),
+                remote_url.clone(),
+                cancel.clone()
+            )
+            .await,
+            Err(Error::Canceled)
+        ));
+
+        assert!(matches!(
+            get_content_digest(
+                config.clone(),
+                client.clone(),
+                remote_url.clone(),
+                cancel.clone()
+            )
+            .await,
+            Err(Error::Canceled)
+        ));
     }
 }
