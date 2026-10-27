@@ -13,6 +13,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 * Fixed partial directory uploads not resuming correctly by ignoring existing files instead of aborting when `RemoteDestinationExists` is encountered ([#46](https://github.com/stjude-rust-labs/cloud-copy/pull/46)).
 * Improved error reporting by including the file path in upload errors ([#46](https://github.com/stjude-rust-labs/cloud-copy/pull/46)).
 
+#### Changed
+
+* Implemented support for localhost URIs for both the Azure and S3 backends ([#49](https://github.com/stjude-rust-labs/cloud-copy/pull/49)).
+
 ## 0.10.1 - 08-27-2026
 
 #### Fixed
