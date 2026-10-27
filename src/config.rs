@@ -152,9 +152,6 @@ pub struct AzureConfig {
     /// If `None`, no authentication header will be put on requests.
     #[serde(default)]
     auth: Option<AzureAuthConfig>,
-    /// Stores whether or not Azurite is being used.
-    #[serde(default)]
-    use_azurite: bool,
 }
 
 impl AzureConfig {
@@ -171,29 +168,11 @@ impl AzureConfig {
         self
     }
 
-    /// Sets whether or not [Azurite](https://learn.microsoft.com/en-us/azure/storage/common/storage-use-azurite) is being used.
-    ///
-    /// Requests for Azurite are expected to use host suffix
-    /// `blob.core.windows.net.localhost`.
-    ///
-    /// Any URLs that use the `az` scheme will be rewritten to use that suffix.
-    ///
-    /// This setting is primarily intended for local testing.
-    pub fn with_use_azurite(mut self, use_azurite: bool) -> Self {
-        self.use_azurite = use_azurite;
-        self
-    }
-
     /// Gets the Azure Storage authentication configuration.
     ///
     /// Returns `None` if requests are not using authentication.
     pub fn auth(&self) -> Option<&AzureAuthConfig> {
         self.auth.as_ref()
-    }
-
-    /// Gets whether or not [Azurite](https://learn.microsoft.com/en-us/azure/storage/common/storage-use-azurite) is being used.
-    pub fn use_azurite(&self) -> bool {
-        self.use_azurite
     }
 }
 
@@ -229,9 +208,6 @@ pub struct S3Config {
     /// If `None`, no authentication header will be put on requests.
     #[serde(default)]
     auth: Option<S3AuthConfig>,
-    /// Stores whether or not Floci is being used.
-    #[serde(default)]
-    use_floci: bool,
 }
 
 impl S3Config {
@@ -266,18 +242,6 @@ impl S3Config {
         self
     }
 
-    /// Sets whether or not [Floci](https://github.com/floci-io/floci) is being used.
-    ///
-    /// The domain suffix is expected to be `localhost` for Floci requests.
-    ///
-    /// Any URLs that use the `s3` scheme will be rewritten to use that suffix.
-    ///
-    /// This setting is primarily intended for local testing.
-    pub fn with_use_floci(mut self, use_floci: bool) -> Self {
-        self.use_floci = use_floci;
-        self
-    }
-
     /// Gets the default region to apply to `s3` schemed URLs.
     ///
     /// Defaults to `us-east-1`
@@ -290,11 +254,6 @@ impl S3Config {
     /// Returns `None` if requests are not using authentication.
     pub fn auth(&self) -> Option<&S3AuthConfig> {
         self.auth.as_ref()
-    }
-
-    /// Gets whether or not [Floci](https://github.com/floci-io/floci) is being used.
-    pub fn use_floci(&self) -> bool {
-        self.use_floci
     }
 }
 

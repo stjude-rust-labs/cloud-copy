@@ -160,7 +160,7 @@ fn walk_dir(dir: &Path) -> Result<Vec<PathBuf>> {
 fn urls(test: &str) -> Vec<Url> {
     vec![
         // S3 URLs
-        format!("s3://{TEST_BUCKET_NAME}/1/{test}").parse().unwrap(),
+        format!("s3://{TEST_BUCKET_NAME}:4566/1/{test}").parse().unwrap(),
         format!("http://s3.us-east-1.localhost:4566/{TEST_BUCKET_NAME}/2/{test}")
             .parse()
             .unwrap(),
@@ -169,13 +169,13 @@ fn urls(test: &str) -> Vec<Url> {
             .unwrap(),
 
         // Azure URLs
-        format!("az://devstoreaccount1/{TEST_BUCKET_NAME}/1/{test}").parse().unwrap(),
+        format!("az://devstoreaccount1:10000/{TEST_BUCKET_NAME}/1/{test}").parse().unwrap(),
         format!("http://devstoreaccount1.blob.core.windows.net.localhost:10000/{TEST_BUCKET_NAME}/2/{test}").parse().unwrap(),
     ]
 }
 
 fn azure_config() -> AzureConfig {
-    AzureConfig::default().with_use_azurite(true).with_auth(
+    AzureConfig::default().with_auth(
         "devstoreaccount1",
         // This is the Azurite secret key used for testing; it is not a secret
         "Eby8vdM02xNOcqFlqUwJPLlmEtlCDXJ1OUzFT50uSRZ6IFsuFq2UVErCz4I6tq/K1SZFPTOtr/KBHBeksoGMGw==",
@@ -183,9 +183,7 @@ fn azure_config() -> AzureConfig {
 }
 
 fn s3_config() -> S3Config {
-    S3Config::default()
-        .with_use_floci(true)
-        .with_auth("test", "test")
+    S3Config::default().with_auth("test", "test")
 }
 
 fn config(overwrite: bool) -> Config {

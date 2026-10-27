@@ -123,7 +123,7 @@ pub(crate) fn revalidation_hook(
         return Ok(());
     };
 
-    if !is_azure_domain(config, host) {
+    if !is_azure_domain(host) {
         return Ok(());
     }
 
@@ -142,14 +142,14 @@ pub(crate) fn revalidation_hook(
 }
 
 /// Determines if the given domain is for Azure Storage.
-fn is_azure_domain(config: &Config, domain: &str) -> bool {
+fn is_azure_domain(domain: &str) -> bool {
     // Virtual host style URL of the form https://<account>.blob.core.windows.net/<container>/<path>
     let Some((_, domain)) = domain.split_once('.') else {
         return false;
     };
 
     domain.eq_ignore_ascii_case(AZURE_BLOB_STORAGE_ROOT_DOMAIN)
-        | (config.azure().use_azurite() && domain.eq_ignore_ascii_case(AZURITE_ROOT_DOMAIN))
+        | domain.eq_ignore_ascii_case(AZURITE_ROOT_DOMAIN)
 }
 
 /// Represents an Azure-specific copy operation error.
@@ -504,7 +504,7 @@ impl StorageBackend for AzureBlobStorageBackend {
         Ok(block_size)
     }
 
-    fn is_supported_url(config: &Config, url: &Url) -> bool {
+    fn is_supported_url(url: &Url) -> bool {
         match url.scheme() {
             "az" => true,
             "http" | "https" => {
@@ -512,13 +512,13 @@ impl StorageBackend for AzureBlobStorageBackend {
                     return false;
                 };
 
-                is_azure_domain(config, domain)
+                is_azure_domain(domain)
             }
             _ => false,
         }
     }
 
-    fn rewrite_url<'a>(config: &Config, url: &'a Url) -> Result<Cow<'a, Url>> {
+    fn rewrite_url<'a>(_: &Config, url: &'a Url) -> Result<Cow<'a, Url>> {
         match url.scheme() {
             "az" => {
                 let account = url.host_str().ok_or(AzureError::InvalidScheme)?;
@@ -527,10 +527,10 @@ impl StorageBackend for AzureBlobStorageBackend {
                     return Err(AzureError::InvalidScheme.into());
                 }
 
-                let (scheme, root, port) = if config.azure().use_azurite() {
-                    ("http", AZURITE_ROOT_DOMAIN, ":10000")
+                let (scheme, root, port) = if let Some(port) = url.port() {
+                    ("http", AZURITE_ROOT_DOMAIN, Cow::Owned(format!(":{port}")))
                 } else {
-                    ("https", AZURE_BLOB_STORAGE_ROOT_DOMAIN, "")
+                    ("https", AZURE_BLOB_STORAGE_ROOT_DOMAIN, Cow::Borrowed(""))
                 };
 
                 match (url.query(), url.fragment()) {
@@ -587,7 +587,7 @@ impl StorageBackend for AzureBlobStorageBackend {
 
     async fn head(&self, url: Url, must_exist: bool) -> Result<Response> {
         debug_assert!(
-            Self::is_supported_url(&self.config, &url),
+            Self::is_supported_url(&url),
             "{url} is not a supported Azure URL",
             url = url.as_str()
         );
@@ -623,7 +623,7 @@ impl StorageBackend for AzureBlobStorageBackend {
 
     async fn get(&self, url: Url) -> Result<Response> {
         debug_assert!(
-            Self::is_supported_url(&self.config, &url),
+            Self::is_supported_url(&url),
             "{url} is not a supported Azure URL",
             url = url.as_str()
         );
@@ -658,7 +658,7 @@ impl StorageBackend for AzureBlobStorageBackend {
         exclusive_end: Option<u64>,
     ) -> Result<Response> {
         debug_assert!(
-            Self::is_supported_url(&self.config, &url),
+            Self::is_supported_url(&url),
             "{url} is not a supported Azure URL",
             url = url.as_str()
         );
@@ -702,7 +702,7 @@ impl StorageBackend for AzureBlobStorageBackend {
 
     async fn walk(&self, url: Url, first_only: bool) -> Result<Vec<String>> {
         debug_assert!(
-            Self::is_supported_url(&self.config, &url),
+            Self::is_supported_url(&url),
             "{url} is not a supported Azure URL",
             url = url.as_str()
         );
@@ -872,7 +872,7 @@ impl StorageBackend for AzureBlobStorageBackend {
 
     async fn new_upload(&self, url: Url, digest: Option<String>) -> Result<Self::Upload> {
         debug_assert!(
-            Self::is_supported_url(&self.config, &url),
+            Self::is_supported_url(&url),
             "{url} is not a supported Azure URL",
             url = url.as_str()
         );
