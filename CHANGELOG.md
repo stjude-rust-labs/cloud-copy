@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## Unreleased
 
+## 0.11.0 - 10-28-2026
+
 #### Fixed
 
 * Fixed directory uploads failing on broken symlinks by gracefully skipping them instead of aborting the upload ([#46](https://github.com/stjude-rust-labs/cloud-copy/pull/46)).
