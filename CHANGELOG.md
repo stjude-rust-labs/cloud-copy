@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## Unreleased
 
+#### Added
+
+* Added support for S3-compatible storage services such as MinIO and Ceph ([#48](https://github.com/stjude-rust-labs/cloud-copy/issues/48)):
+  * `S3Config::with_endpoint` and `S3Config::with_path_style` set the endpoint of the service and whether `s3` schemed URLs use path-style addressing.
+  * The CLI reads the endpoint from `--aws-endpoint-url-s3`/`AWS_ENDPOINT_URL_S3` or `--aws-endpoint-url`/`AWS_ENDPOINT_URL`, and path-style addressing from `--s3-path-style`/`CLOUD_COPY_S3_PATH_STYLE`.
+
+#### Fixed
+
+* Fixed S3 request signing to use the same `Host` as the request, which includes the port; requests to a non-default port (e.g. `localhost` URLs) were rejected by services that verify signatures.
+* Fixed S3 request signing panicking for URLs with an IP address host.
+* Fixed listing a directory for a virtual host style S3 URL whose bucket name begins with `s3`.
+
 ## 0.11.0 - 10-28-2026
 
 #### Fixed

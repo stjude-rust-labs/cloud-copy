@@ -73,6 +73,42 @@ when invoking `cloud-copy`:
 * `AWS_SECRET_ACCESS_KEY` - the AWS secret access key to use for authentication.
 * `AWS_DEFAULT_REGION` - the default region to use for any `s3://` URLs.
 
+##### S3-compatible storage services
+
+Services that implement the S3 API, such as [MinIO](https://min.io/) or
+[Ceph](https://ceph.io/), can be used by setting the endpoint of the service
+with the following environment variables (or the equivalent command line
+options):
+
+* `AWS_ENDPOINT_URL_S3` or `AWS_ENDPOINT_URL` - the endpoint URL of the
+  service, e.g. `http://localhost:9000` (`AWS_ENDPOINT_URL_S3` takes
+  precedence).
+* `CLOUD_COPY_S3_PATH_STYLE` - set to `true` to use path-style addressing for
+  `s3://` URLs; this is required for services that do not support wildcard DNS
+  and is always used when the endpoint's host is an IP address.
+
+When an endpoint is set, `s3://<bucket>/<object>` URLs are sent to the endpoint
+instead of AWS, and the following `http` or `https` URLs (using the endpoint's
+scheme, host, and port) are also supported:
+
+* `<endpoint>/<bucket>/<object>` (path-style).
+* `<scheme>://<bucket>.<endpoint host>/<object>` (virtual host style).
+
+Requests are signed for the region given by `AWS_DEFAULT_REGION`, which
+defaults to `us-east-1`.
+
+For example, to copy files to and from a local MinIO server:
+
+```bash
+export AWS_ACCESS_KEY_ID=minioadmin
+export AWS_SECRET_ACCESS_KEY=minioadmin
+export AWS_ENDPOINT_URL=http://localhost:9000
+export CLOUD_COPY_S3_PATH_STYLE=true
+
+cloud-copy ./data s3://my-bucket/data
+cloud-copy s3://my-bucket/data ./downloaded
+```
+
 #### Google Cloud Storage
 
 Supported remote URLs for [Google Cloud Storage](https://cloud.google.com/storage):

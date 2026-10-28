@@ -128,6 +128,14 @@ where
             }
         }
 
+        // The host must match the `Host` header sent with the request, which
+        // includes the port if it is not the default for the scheme
+        let host = url.host_str().expect("should have host");
+        let host = match url.port() {
+            Some(port) => format!("{host}:{port}"),
+            None => host.to_string(),
+        };
+
         // Get the date header
         let date = request
             .headers()
@@ -146,7 +154,7 @@ where
 {method}
 {path}
 {query_string}
-host:{domain}
+host:{host}
 {content_hash_header}:{content_hash}
 {date_header}:{date}
 
@@ -154,7 +162,6 @@ host;{content_hash_header};{date_header}
 {content_hash}",
             method = request.method(),
             path = url.path(),
-            domain = request.url().domain().expect("should have domain").trim(),
             date_header = self.0.date_header_name(),
             date = date.to_str().expect("date should be a string").trim(),
             content_hash_header = self.0.content_hash_header_name(),
@@ -218,5 +225,101 @@ host;{content_hash_header};{date_header}
         let mut hmac = Hmac::new_from_slice(&date_region_service_key).ok()?;
         hmac.update(self.0.request_type().as_bytes());
         Some(hmac.finalize().into_bytes())
+    }
+}
+
+#[cfg(test)]
+mod test {
+    use reqwest::Method;
+    use reqwest::header::HeaderValue;
+    use url::Url;
+
+    use super::*;
+
+    struct TestProvider;
+
+    impl SignatureProvider for TestProvider {
+        fn algorithm(&self) -> &str {
+            "AWS4-HMAC-SHA256"
+        }
+
+        fn secret_key_prefix(&self) -> &str {
+            "AWS4"
+        }
+
+        fn request_type(&self) -> &str {
+            "aws4_request"
+        }
+
+        fn region(&self) -> &str {
+            "us-east-1"
+        }
+
+        fn service(&self) -> &str {
+            "s3"
+        }
+
+        fn date_header_name(&self) -> &str {
+            "x-amz-date"
+        }
+
+        fn content_hash_header_name(&self) -> &str {
+            "x-amz-content-sha256"
+        }
+
+        fn access_key_id(&self) -> &str {
+            "test"
+        }
+
+        fn secret_access_key(&self) -> &str {
+            "test"
+        }
+    }
+
+    /// Gets the host line of the canonical request for the given URL.
+    fn canonical_host(url: &str) -> String {
+        let mut request = Request::new(Method::GET, url.parse::<Url>().unwrap());
+        request
+            .headers_mut()
+            .insert("x-amz-date", HeaderValue::from_static("20260101T000000Z"));
+        request
+            .headers_mut()
+            .insert("x-amz-content-sha256", HeaderValue::from_static("hash"));
+
+        RequestSigner::new(TestProvider)
+            .create_canonical_request(&request)
+            .lines()
+            .find(|line| line.starts_with("host:"))
+            .expect("should have host line")
+            .to_string()
+    }
+
+    #[test]
+    fn canonical_request_host_matches_host_header() {
+        // The default port is omitted
+        assert_eq!(
+            canonical_host("https://bucket.s3.us-east-1.amazonaws.com/key"),
+            "host:bucket.s3.us-east-1.amazonaws.com"
+        );
+        assert_eq!(
+            canonical_host("https://bucket.s3.us-east-1.amazonaws.com:443/key"),
+            "host:bucket.s3.us-east-1.amazonaws.com"
+        );
+
+        // Non-default ports are included
+        assert_eq!(
+            canonical_host("http://minio.local:9000/bucket/key"),
+            "host:minio.local:9000"
+        );
+
+        // IP address hosts are supported
+        assert_eq!(
+            canonical_host("http://127.0.0.1:9000/bucket/key"),
+            "host:127.0.0.1:9000"
+        );
+        assert_eq!(
+            canonical_host("http://[::1]:9000/bucket/key"),
+            "host:[::1]:9000"
+        );
     }
 }

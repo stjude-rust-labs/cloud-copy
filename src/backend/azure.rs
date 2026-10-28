@@ -504,7 +504,7 @@ impl StorageBackend for AzureBlobStorageBackend {
         Ok(block_size)
     }
 
-    fn is_supported_url(url: &Url) -> bool {
+    fn is_supported_url(_: &Config, url: &Url) -> bool {
         match url.scheme() {
             "az" => true,
             "http" | "https" => {
@@ -587,7 +587,7 @@ impl StorageBackend for AzureBlobStorageBackend {
 
     async fn head(&self, url: Url, must_exist: bool) -> Result<Response> {
         debug_assert!(
-            Self::is_supported_url(&url),
+            Self::is_supported_url(&self.config, &url),
             "{url} is not a supported Azure URL",
             url = url.as_str()
         );
@@ -623,7 +623,7 @@ impl StorageBackend for AzureBlobStorageBackend {
 
     async fn get(&self, url: Url) -> Result<Response> {
         debug_assert!(
-            Self::is_supported_url(&url),
+            Self::is_supported_url(&self.config, &url),
             "{url} is not a supported Azure URL",
             url = url.as_str()
         );
@@ -658,7 +658,7 @@ impl StorageBackend for AzureBlobStorageBackend {
         exclusive_end: Option<u64>,
     ) -> Result<Response> {
         debug_assert!(
-            Self::is_supported_url(&url),
+            Self::is_supported_url(&self.config, &url),
             "{url} is not a supported Azure URL",
             url = url.as_str()
         );
@@ -702,7 +702,7 @@ impl StorageBackend for AzureBlobStorageBackend {
 
     async fn walk(&self, url: Url, first_only: bool) -> Result<Vec<String>> {
         debug_assert!(
-            Self::is_supported_url(&url),
+            Self::is_supported_url(&self.config, &url),
             "{url} is not a supported Azure URL",
             url = url.as_str()
         );
@@ -872,7 +872,7 @@ impl StorageBackend for AzureBlobStorageBackend {
 
     async fn new_upload(&self, url: Url, digest: Option<String>) -> Result<Self::Upload> {
         debug_assert!(
-            Self::is_supported_url(&url),
+            Self::is_supported_url(&self.config, &url),
             "{url} is not a supported Azure URL",
             url = url.as_str()
         );

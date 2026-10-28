@@ -36,6 +36,7 @@ use tracing::level_filters::LevelFilter;
 use tracing_indicatif::IndicatifLayer;
 use tracing_subscriber::EnvFilter;
 use tracing_subscriber::layer::SubscriberExt;
+use url::Url;
 
 git_testament!(TESTAMENT);
 
@@ -72,6 +73,21 @@ impl std::fmt::Display for ColorMode {
             Self::Never => write!(f, "never"),
         }
     }
+}
+
+/// Parses and validates the URL of an S3 endpoint.
+fn parse_endpoint_url(s: &str) -> std::result::Result<Url, String> {
+    let url: Url = s.parse().map_err(|e| format!("invalid URL: {e}"))?;
+
+    if !matches!(url.scheme(), "http" | "https") || url.host_str().is_none() {
+        return Err("the endpoint must be an `http` or `https` URL with a host".into());
+    }
+
+    if url.path() != "/" || url.query().is_some() || url.fragment().is_some() {
+        return Err("the endpoint must not have a path, query, or fragment".into());
+    }
+
+    Ok(url)
 }
 
 /// A utility for transferring files to and from cloud storage services.
@@ -150,6 +166,24 @@ struct Args {
     #[clap(long, env, value_name = "REGION")]
     aws_default_region: Option<String>,
 
+    /// The endpoint URL of an S3-compatible service (e.g. MinIO).
+    ///
+    /// Takes precedence over `AWS_ENDPOINT_URL`.
+    #[clap(long, env, value_name = "URL", value_parser = parse_endpoint_url)]
+    aws_endpoint_url_s3: Option<Url>,
+
+    /// The endpoint URL to use for S3 requests (e.g. `http://localhost:9000`).
+    #[clap(long, env, value_name = "URL", value_parser = parse_endpoint_url)]
+    aws_endpoint_url: Option<Url>,
+
+    /// Whether or not to use path-style addressing for `s3` schemed URLs.
+    ///
+    /// Path-style addressing places the bucket in the URL's path instead of
+    /// the host; it is required by S3-compatible services without wildcard
+    /// DNS.
+    #[clap(long = "s3-path-style", env = "CLOUD_COPY_S3_PATH_STYLE")]
+    s3_path_style: bool,
+
     /// The Google Cloud Storage HMAC access key to use.
     #[clap(long, env, value_name = "KEY", requires = "google_hmac_secret")]
     google_hmac_access_key: Option<String>,
@@ -191,7 +225,9 @@ impl Args {
             } else {
                 S3Config::default()
             }
-            .with_maybe_region(self.aws_default_region);
+            .with_maybe_region(self.aws_default_region)
+            .with_maybe_endpoint(self.aws_endpoint_url_s3.or(self.aws_endpoint_url))
+            .with_path_style(self.s3_path_style);
 
         let google = if let (Some(access_key), Some(secret)) =
             (self.google_hmac_access_key, self.google_hmac_secret)

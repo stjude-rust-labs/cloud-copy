@@ -970,3 +970,98 @@ async fn size() -> Result<()> {
 
     Ok(())
 }
+
+/// Tests copying with the endpoint of an S3-compatible service configured.
+///
+/// This uses the same emulator as the other S3 tests, but addressed through the
+/// endpoint setting instead of a `localhost` URL.
+#[tokio::test]
+async fn s3_custom_endpoint() -> Result<()> {
+    let test = format!("{random}", random = Alphanumeric::new(10));
+    let client = HttpClient::default();
+    let cancel = CancellationToken::new();
+
+    let source = tempdir().context("failed to create temporary directory")?;
+    create_random_files(source.path(), 2)
+        .await
+        .context("failed to populate temporary directory")?;
+    let source_entries = walk_dir(source.path()).context("failed to walk source directory")?;
+
+    // Virtual host style and path-style with a domain, and an IP address (which
+    // is always path-style)
+    for (i, (endpoint, path_style)) in [
+        ("http://localhost:4566", false),
+        ("http://localhost:4566", true),
+        ("http://127.0.0.1:4566", false),
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        let config = Config::builder()
+            .with_overwrite(true)
+            .with_s3(
+                s3_config()
+                    .with_endpoint(endpoint.parse().unwrap())
+                    .with_path_style(path_style),
+            )
+            .build();
+
+        let url: Url = format!("s3://{TEST_BUCKET_NAME}/endpoint/{test}/{i}")
+            .parse()
+            .unwrap();
+
+        cloud_copy::copy(
+            config.clone(),
+            client.clone(),
+            source.path(),
+            &url,
+            cancel.clone(),
+            None,
+        )
+        .await
+        .with_context(|| format!("failed to upload directory with endpoint `{endpoint}`"))?;
+
+        let destination = tempdir().context("failed to create temporary directory")?;
+        let destination = destination.path().join("download");
+        cloud_copy::copy(
+            config.clone(),
+            client.clone(),
+            &url,
+            &*destination,
+            cancel.clone(),
+            None,
+        )
+        .await
+        .with_context(|| format!("failed to download directory with endpoint `{endpoint}`"))?;
+
+        let destination_entries =
+            walk_dir(&destination).context("failed to walk destination directory")?;
+        assert_eq!(source_entries, destination_entries);
+
+        for entry in &source_entries {
+            let (source, destination) = (source.path().join(entry), destination.join(entry));
+            if source.is_file()
+                && !same_file_content(&source, &destination)
+                    .await
+                    .context("failed to compare files")?
+            {
+                bail!(
+                    "contents of uploaded file `{source}` does not match the contents of \
+                     downloaded file `{destination}`",
+                    source = source.display(),
+                    destination = destination.display()
+                );
+            }
+        }
+
+        // The URL should be found by a request that uses the endpoint
+        assert!(
+            cloud_copy::exists(config, client.clone(), url.clone())
+                .await
+                .context("checking for existence")?,
+            "URL `{url}` should exist with endpoint `{endpoint}`"
+        );
+    }
+
+    Ok(())
+}

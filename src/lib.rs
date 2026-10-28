@@ -781,6 +781,13 @@ async fn copy_local(
 /// If authentication is required, the provided `Config` must have S3
 /// authentication information.
 ///
+/// If the `Config` has an S3 endpoint (see [`S3Config::with_endpoint`]), `s3`
+/// schemed URLs are sent to the endpoint instead of AWS and `http` or `https`
+/// URLs for the endpoint are also supported, in the formats
+/// `<endpoint>/<bucket>/<object>` and
+/// `<scheme>://<bucket>.<endpoint host>/<object>`. Use
+/// [`S3Config::with_path_style`] for services that do not support the latter.
+///
 /// # Google Cloud Storage
 ///
 /// Supported remote URLs for Google Cloud Storage:
@@ -824,17 +831,17 @@ pub async fn copy(
                 return copy_local(&source, &destination, cancel, events).await;
             }
 
-            if AzureBlobStorageBackend::is_supported_url(&destination) {
+            if AzureBlobStorageBackend::is_supported_url(&config, &destination) {
                 let destination = AzureBlobStorageBackend::rewrite_url(&config, &destination)?;
                 let transfer =
                     FileTransfer::new(AzureBlobStorageBackend::new(config, client, events), cancel);
                 transfer.upload(source, destination.into_owned()).await
-            } else if S3StorageBackend::is_supported_url(&destination) {
+            } else if S3StorageBackend::is_supported_url(&config, &destination) {
                 let destination = S3StorageBackend::rewrite_url(&config, &destination)?;
                 let transfer =
                     FileTransfer::new(S3StorageBackend::new(config, client, events), cancel);
                 transfer.upload(source, destination.into_owned()).await
-            } else if GoogleStorageBackend::is_supported_url(&destination) {
+            } else if GoogleStorageBackend::is_supported_url(&config, &destination) {
                 let destination = GoogleStorageBackend::rewrite_url(&config, &destination)?;
                 let transfer =
                     FileTransfer::new(GoogleStorageBackend::new(config, client, events), cancel);
@@ -853,17 +860,17 @@ pub async fn copy(
                 return copy_local(&source, &destination, cancel, events).await;
             }
 
-            if AzureBlobStorageBackend::is_supported_url(&source) {
+            if AzureBlobStorageBackend::is_supported_url(&config, &source) {
                 let source = AzureBlobStorageBackend::rewrite_url(&config, &source)?;
                 let transfer =
                     FileTransfer::new(AzureBlobStorageBackend::new(config, client, events), cancel);
                 transfer.download(source.into_owned(), destination).await
-            } else if S3StorageBackend::is_supported_url(&source) {
+            } else if S3StorageBackend::is_supported_url(&config, &source) {
                 let source = S3StorageBackend::rewrite_url(&config, &source)?;
                 let transfer =
                     FileTransfer::new(S3StorageBackend::new(config, client, events), cancel);
                 transfer.download(source.into_owned(), destination).await
-            } else if GoogleStorageBackend::is_supported_url(&source) {
+            } else if GoogleStorageBackend::is_supported_url(&config, &source) {
                 let source = GoogleStorageBackend::rewrite_url(&config, &source)?;
                 let transfer =
                     FileTransfer::new(GoogleStorageBackend::new(config, client, events), cancel);
@@ -893,11 +900,11 @@ pub async fn copy(
 ///
 /// Returns an error if the given URL is not a valid cloud storage URL.
 pub fn rewrite_url<'a>(config: &Config, url: &'a Url) -> Result<Cow<'a, Url>> {
-    if AzureBlobStorageBackend::is_supported_url(url) {
+    if AzureBlobStorageBackend::is_supported_url(config, url) {
         AzureBlobStorageBackend::rewrite_url(config, url)
-    } else if S3StorageBackend::is_supported_url(url) {
+    } else if S3StorageBackend::is_supported_url(config, url) {
         S3StorageBackend::rewrite_url(config, url)
-    } else if GoogleStorageBackend::is_supported_url(url) {
+    } else if GoogleStorageBackend::is_supported_url(config, url) {
         GoogleStorageBackend::rewrite_url(config, url)
     } else {
         Ok(Cow::Borrowed(url))
@@ -918,17 +925,17 @@ pub async fn walk(config: Config, client: HttpClient, mut url: Url) -> Result<Ve
         segments.pop_if_empty().push("");
     }
 
-    let mut entries = if AzureBlobStorageBackend::is_supported_url(&url) {
+    let mut entries = if AzureBlobStorageBackend::is_supported_url(&config, &url) {
         let url = AzureBlobStorageBackend::rewrite_url(&config, &url)?;
         AzureBlobStorageBackend::new(config, client, None)
             .walk(url.into_owned(), false)
             .await
-    } else if S3StorageBackend::is_supported_url(&url) {
+    } else if S3StorageBackend::is_supported_url(&config, &url) {
         let url = S3StorageBackend::rewrite_url(&config, &url)?;
         S3StorageBackend::new(config, client, None)
             .walk(url.into_owned(), false)
             .await
-    } else if GoogleStorageBackend::is_supported_url(&url) {
+    } else if GoogleStorageBackend::is_supported_url(&config, &url) {
         let url = GoogleStorageBackend::rewrite_url(&config, &url)?;
         GoogleStorageBackend::new(config, client, None)
             .walk(url.into_owned(), false)
@@ -1001,7 +1008,7 @@ pub async fn get_content_digest(
     url: Url,
 ) -> Result<Option<ContentDigest>> {
     // Issue the `HEAD` request
-    let (response, metadata) = if AzureBlobStorageBackend::is_supported_url(&url) {
+    let (response, metadata) = if AzureBlobStorageBackend::is_supported_url(&config, &url) {
         let url = AzureBlobStorageBackend::rewrite_url(&config, &url)?;
         (
             AzureBlobStorageBackend::new(config, client, None)
@@ -1009,7 +1016,7 @@ pub async fn get_content_digest(
                 .await?,
             Some(AZURE_CONTENT_DIGEST_HEADER),
         )
-    } else if S3StorageBackend::is_supported_url(&url) {
+    } else if S3StorageBackend::is_supported_url(&config, &url) {
         let url = S3StorageBackend::rewrite_url(&config, &url)?;
         (
             S3StorageBackend::new(config, client, None)
@@ -1017,7 +1024,7 @@ pub async fn get_content_digest(
                 .await?,
             Some(AWS_CONTENT_DIGEST_HEADER),
         )
-    } else if GoogleStorageBackend::is_supported_url(&url) {
+    } else if GoogleStorageBackend::is_supported_url(&config, &url) {
         let url = GoogleStorageBackend::rewrite_url(&config, &url)?;
         (
             GoogleStorageBackend::new(config, client, None)
@@ -1068,7 +1075,7 @@ pub async fn exists(config: Config, client: HttpClient, url: Url) -> Result<bool
         return Ok(path.exists());
     }
 
-    if AzureBlobStorageBackend::is_supported_url(&url) {
+    if AzureBlobStorageBackend::is_supported_url(&config, &url) {
         let url = AzureBlobStorageBackend::rewrite_url(&config, &url)?;
         let backend = AzureBlobStorageBackend::new(config, client, None);
         let response = backend.head(url.as_ref().clone(), false).await?;
@@ -1078,7 +1085,7 @@ pub async fn exists(config: Config, client: HttpClient, url: Url) -> Result<bool
 
         // Check for a directory URL
         Ok(!backend.walk(url.into_owned(), true).await?.is_empty())
-    } else if S3StorageBackend::is_supported_url(&url) {
+    } else if S3StorageBackend::is_supported_url(&config, &url) {
         let url = S3StorageBackend::rewrite_url(&config, &url)?;
         let backend = S3StorageBackend::new(config, client, None);
         let response = backend.head(url.as_ref().clone(), false).await?;
@@ -1088,7 +1095,7 @@ pub async fn exists(config: Config, client: HttpClient, url: Url) -> Result<bool
 
         // Check for a directory URL
         Ok(!backend.walk(url.into_owned(), true).await?.is_empty())
-    } else if GoogleStorageBackend::is_supported_url(&url) {
+    } else if GoogleStorageBackend::is_supported_url(&config, &url) {
         let url = GoogleStorageBackend::rewrite_url(&config, &url)?;
         let backend = GoogleStorageBackend::new(config, client, None);
         let response = backend.head(url.as_ref().clone(), false).await?;
@@ -1118,15 +1125,15 @@ pub async fn size(config: Config, client: HttpClient, url: Url) -> Result<Option
         return Ok(Some(metadata.len()));
     }
 
-    let response = if AzureBlobStorageBackend::is_supported_url(&url) {
+    let response = if AzureBlobStorageBackend::is_supported_url(&config, &url) {
         let url = AzureBlobStorageBackend::rewrite_url(&config, &url)?;
         let backend = AzureBlobStorageBackend::new(config, client, None);
         backend.head(url.as_ref().clone(), true).await?
-    } else if S3StorageBackend::is_supported_url(&url) {
+    } else if S3StorageBackend::is_supported_url(&config, &url) {
         let url = S3StorageBackend::rewrite_url(&config, &url)?;
         let backend = S3StorageBackend::new(config, client, None);
         backend.head(url.as_ref().clone(), true).await?
-    } else if GoogleStorageBackend::is_supported_url(&url) {
+    } else if GoogleStorageBackend::is_supported_url(&config, &url) {
         let url = GoogleStorageBackend::rewrite_url(&config, &url)?;
         let backend = GoogleStorageBackend::new(config, client, None);
         backend.head(url.as_ref().clone(), true).await?
@@ -1206,5 +1213,81 @@ mod test {
                 .as_str(),
             "http://foo.s3.us-east-1.localhost:4566/bar/baz",
         );
+    }
+
+    #[test]
+    fn rewrite_s3_urls_with_path_style() {
+        let config = Config::builder()
+            .with_s3(S3Config::default().with_path_style(true))
+            .build();
+
+        assert_eq!(
+            rewrite_url(&config, &"s3://foo/bar/baz".parse().unwrap())
+                .unwrap()
+                .as_str(),
+            "https://s3.us-east-1.amazonaws.com/foo/bar/baz"
+        );
+
+        assert_eq!(
+            rewrite_url(&config, &"s3://foo:4566/bar/baz".parse().unwrap())
+                .unwrap()
+                .as_str(),
+            "http://s3.us-east-1.localhost:4566/foo/bar/baz"
+        );
+    }
+
+    #[test]
+    fn rewrite_s3_urls_with_endpoint() {
+        let rewrite = |s3: S3Config, url: &str| {
+            let config = Config::builder().with_s3(s3).build();
+            rewrite_url(&config, &url.parse().unwrap()).map(|u| u.into_owned().to_string())
+        };
+
+        // Virtual host style
+        let s3 = S3Config::default().with_endpoint("http://minio.local:9000".parse().unwrap());
+        assert_eq!(
+            rewrite(s3.clone(), "s3://foo/bar/baz").unwrap(),
+            "http://foo.minio.local:9000/bar/baz"
+        );
+
+        // Path style
+        let path_style = s3.clone().with_path_style(true);
+        assert_eq!(
+            rewrite(path_style.clone(), "s3://foo/bar/baz?a=b#c").unwrap(),
+            "http://minio.local:9000/foo/bar/baz?a=b#c"
+        );
+
+        // The endpoint takes precedence over the localhost port of the URL
+        assert_eq!(
+            rewrite(path_style, "s3://foo:4566/bar/baz").unwrap(),
+            "http://minio.local:9000/foo/bar/baz"
+        );
+
+        // An endpoint without a port
+        let s3 = S3Config::default()
+            .with_endpoint("https://s3.example.com".parse().unwrap())
+            .with_path_style(true);
+        assert_eq!(
+            rewrite(s3, "s3://foo/bar/baz").unwrap(),
+            "https://s3.example.com/foo/bar/baz"
+        );
+
+        // A host that is an IP address always uses path style
+        let s3 = S3Config::default().with_endpoint("http://127.0.0.1:9000".parse().unwrap());
+        assert_eq!(
+            rewrite(s3, "s3://foo/bar/baz").unwrap(),
+            "http://127.0.0.1:9000/foo/bar/baz"
+        );
+
+        // URLs that are not `s3` schemed are not rewritten
+        let s3 = S3Config::default().with_endpoint("http://minio.local:9000".parse().unwrap());
+        assert_eq!(
+            rewrite(s3, "http://minio.local:9000/foo/bar").unwrap(),
+            "http://minio.local:9000/foo/bar"
+        );
+
+        // An endpoint that is not an `http` or `https` URL is invalid
+        let s3 = S3Config::default().with_endpoint("ftp://minio.local".parse().unwrap());
+        assert!(rewrite(s3, "s3://foo/bar/baz").is_err());
     }
 }
