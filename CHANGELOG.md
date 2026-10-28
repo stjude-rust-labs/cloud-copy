@@ -17,6 +17,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 * Fixed S3 request signing to use the same `Host` as the request, which includes the port; requests to a non-default port (e.g. `localhost` URLs) were rejected by services that verify signatures.
 * Fixed S3 request signing panicking for URLs with an IP address host.
+* Fixed S3 uploads failing with a `411` response from servers that require a `Content-Length` header on the request that starts a multipart upload.
 * Fixed listing a directory for a virtual host style S3 URL whose bucket name begins with `s3`.
 
 ## 0.11.0 - 10-28-2026

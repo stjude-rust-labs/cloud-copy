@@ -939,6 +939,9 @@ impl StorageBackend for S3StorageBackend {
             .client
             .post(create)
             .header(header::USER_AGENT, USER_AGENT)
+            // Servers that are stricter than AWS require the header even though
+            // the request has no body
+            .header(header::CONTENT_LENGTH, 0)
             .header(AWS_DATE_HEADER, date.format("%Y%m%dT%H%M%SZ").to_string())
             .header(AWS_CONTENT_SHA256_HEADER, sha256_hex_string([]))
             .build()?;
@@ -1119,6 +1122,59 @@ mod test {
 
         let config = self::config("http://[::1]:9000");
         assert!(is_supported(&config, "http://[::1]:9000/bucket/key"));
+    }
+
+    #[tokio::test]
+    async fn new_upload_sends_content_length() {
+        use tokio::io::AsyncReadExt;
+        use tokio::io::AsyncWriteExt;
+        use tokio::net::TcpListener;
+
+        const RESPONSE_BODY: &str = "<InitiateMultipartUploadResult><UploadId>id\
+                                     </UploadId></InitiateMultipartUploadResult>";
+
+        // Accept a single connection and capture the headers of the request
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let server = tokio::spawn(async move {
+            let (mut stream, _) = listener.accept().await.unwrap();
+
+            let mut request = Vec::new();
+            while !request.windows(4).any(|w| w == b"\r\n\r\n") {
+                let mut buffer = [0; 1024];
+                let read = stream.read(&mut buffer).await.unwrap();
+                assert_ne!(read, 0, "connection closed before the request ended");
+                request.extend_from_slice(&buffer[..read]);
+            }
+
+            let response = format!(
+                "HTTP/1.1 200 OK\r\ncontent-length: {len}\r\nconnection: \
+                 close\r\n\r\n{RESPONSE_BODY}",
+                len = RESPONSE_BODY.len()
+            );
+            stream.write_all(response.as_bytes()).await.unwrap();
+            String::from_utf8(request).unwrap().to_ascii_lowercase()
+        });
+
+        let config = config(&format!("http://127.0.0.1:{port}"));
+        let backend = S3StorageBackend::new(config, HttpClient::default(), None);
+        backend
+            .new_upload(
+                format!("http://127.0.0.1:{port}/bucket/key")
+                    .parse()
+                    .unwrap(),
+                None,
+            )
+            .await
+            .unwrap();
+
+        // Strict servers respond with a 411 if the request has no content length
+        let request = server.await.unwrap();
+        assert!(
+            request.starts_with("post /bucket/key?uploads "),
+            "{request}"
+        );
+        assert!(request.contains("\r\ncontent-length: 0\r\n"), "{request}");
     }
 
     #[test]
