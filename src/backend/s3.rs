@@ -534,7 +534,7 @@ impl StorageBackend for S3StorageBackend {
         Ok(block_size)
     }
 
-    fn is_supported_url(config: &Config, url: &Url) -> bool {
+    fn is_supported_url(url: &Url) -> bool {
         match url.scheme() {
             "s3" => true,
             "http" | "https" => {
@@ -552,8 +552,7 @@ impl StorageBackend for S3StorageBackend {
                     // There must be at least two path segments
                     !region.is_empty()
                         && (domain.eq_ignore_ascii_case(AWS_ROOT_DOMAIN)
-                            || (config.s3().use_floci()
-                                && domain.eq_ignore_ascii_case("localhost")))
+                            || domain.eq_ignore_ascii_case("localhost"))
                         && url
                             .path_segments()
                             .map(|mut s| s.nth(1).is_some())
@@ -568,8 +567,7 @@ impl StorageBackend for S3StorageBackend {
                                 && !region.is_empty()
                                 && service.eq_ignore_ascii_case("s3")
                                 && (domain.eq_ignore_ascii_case(AWS_ROOT_DOMAIN)
-                                    || (config.s3().use_floci()
-                                        && domain.eq_ignore_ascii_case("localhost")))
+                                    || domain.eq_ignore_ascii_case("localhost"))
                                 && url
                                     .path_segments()
                                     .map(|mut s| s.next().is_some())
@@ -594,10 +592,11 @@ impl StorageBackend for S3StorageBackend {
                     return Err(S3Error::InvalidScheme.into());
                 }
 
-                let (scheme, root, port) = if config.s3().use_floci() {
-                    ("http", "localhost", ":4566")
+                // If the S3 URL has a port, assume localhost
+                let (scheme, root, port) = if let Some(port) = url.port() {
+                    ("http", "localhost", Cow::Owned(format!(":{port}")))
                 } else {
-                    ("https", AWS_ROOT_DOMAIN, "")
+                    ("https", AWS_ROOT_DOMAIN, Cow::Borrowed(""))
                 };
 
                 match (url.query(), url.fragment()) {
@@ -635,7 +634,7 @@ impl StorageBackend for S3StorageBackend {
 
     async fn head(&self, url: Url, must_exist: bool) -> Result<Response> {
         debug_assert!(
-            Self::is_supported_url(&self.config, &url),
+            Self::is_supported_url(&url),
             "{url} is not a supported S3 URL",
             url = url.as_str()
         );
@@ -671,7 +670,7 @@ impl StorageBackend for S3StorageBackend {
 
     async fn get(&self, url: Url) -> Result<Response> {
         debug_assert!(
-            Self::is_supported_url(&self.config, &url),
+            Self::is_supported_url(&url),
             "{url} is not a supported S3 URL",
             url = url.as_str()
         );
@@ -707,7 +706,7 @@ impl StorageBackend for S3StorageBackend {
         exclusive_end: Option<u64>,
     ) -> Result<Response> {
         debug_assert!(
-            Self::is_supported_url(&self.config, &url),
+            Self::is_supported_url(&url),
             "{url} is not a supported S3 URL",
             url = url.as_str()
         );
@@ -760,7 +759,7 @@ impl StorageBackend for S3StorageBackend {
         // See: https://docs.aws.amazon.com/AmazonS3/latest/API/API_ListObjectsV2.html
 
         debug_assert!(
-            Self::is_supported_url(&self.config, &url),
+            Self::is_supported_url(&url),
             "{url} is not a supported S3 URL",
             url = url.as_str()
         );
@@ -864,7 +863,7 @@ impl StorageBackend for S3StorageBackend {
         // See: https://docs.aws.amazon.com/AmazonS3/latest/API/API_CreateMultipartUpload.html
 
         debug_assert!(
-            Self::is_supported_url(&self.config, &url),
+            Self::is_supported_url(&url),
             "{url} is not a supported S3 URL",
             url = url.as_str()
         );
