@@ -1,6 +1,7 @@
 //! Implementation of the S3 storage backend.
 
 use std::borrow::Cow;
+use std::fmt;
 
 use bytes::Bytes;
 use chrono::DateTime;
@@ -27,6 +28,7 @@ use crate::HttpClient;
 use crate::ONE_MEBIBYTE;
 use crate::Result;
 use crate::S3AuthConfig;
+use crate::S3Config;
 use crate::TransferEvent;
 use crate::USER_AGENT;
 use crate::UrlExt as _;
@@ -56,17 +58,17 @@ const MAX_PART_SIZE: u64 = MIN_PART_SIZE * 1024;
 const MAX_FILE_SIZE: u64 = MAX_PART_SIZE * 1024;
 
 /// The AWS date header name.
-const AWS_DATE_HEADER: &str = "x-amz-date";
+const X_AMZ_DATE: &str = "x-amz-date";
 
 /// The AWS content SHA256 header name.
 ///
 /// This is the SHA256 of each upload part for multipart uploads.
-const AWS_CONTENT_SHA256_HEADER: &str = "x-amz-content-sha256";
+const X_AMZ_CONTENT_SHA256: &str = "x-amz-content-sha256";
 
 /// The AWS content digest header name.
 ///
 /// This is the content digest for the entire object.
-pub(crate) const AWS_CONTENT_DIGEST_HEADER: &str = "x-amz-meta-content-digest";
+pub(crate) const X_AMZ_META_CONTENT_DIGEST: &str = "x-amz-meta-content-digest";
 
 /// Represents a S3-specific copy operation error.
 #[derive(Debug, thiserror::Error)]
@@ -160,12 +162,18 @@ impl SignatureProvider for S3SignatureProvider<'_> {
         "s3"
     }
 
-    fn date_header_name(&self) -> &str {
-        AWS_DATE_HEADER
+    fn canonical_header_names(&self) -> &[&str] {
+        // The list must be sorted alphabetically
+        &[
+            "host",
+            X_AMZ_CONTENT_SHA256,
+            X_AMZ_DATE,
+            X_AMZ_META_CONTENT_DIGEST,
+        ]
     }
 
     fn content_hash_header_name(&self) -> &str {
-        AWS_CONTENT_SHA256_HEADER
+        X_AMZ_CONTENT_SHA256
     }
 
     fn access_key_id(&self) -> &str {
@@ -179,12 +187,16 @@ impl SignatureProvider for S3SignatureProvider<'_> {
 
 /// Inserts the authentication header to the request.
 fn insert_authentication_header(
-    auth: &S3AuthConfig,
+    config: &S3Config,
     date: DateTime<Utc>,
     request: &mut Request,
 ) -> Result<()> {
+    let Some(auth) = config.auth() else {
+        return Ok(());
+    };
+
     let signer = RequestSigner::new(S3SignatureProvider {
-        region: request.url().region(),
+        region: request.url().region(config).unwrap_or(config.region()),
         auth,
     });
     let auth = signer
@@ -201,68 +213,66 @@ fn insert_authentication_header(
 trait UrlExt {
     /// Extracts the region from the URL.
     ///
-    /// # Panics
-    ///
-    /// Panics if the URL is not a valid S3 URL.
-    fn region(&self) -> &str;
+    /// Returns `None` if the URL does not contain a region.
+    fn region(&self, config: &S3Config) -> Option<&str>;
 
     /// Extracts the bucket name and object path from the URL.
     ///
-    /// # Panics
-    ///
-    /// Panics if the URL is not a valid S3 URL.
-    fn bucket_and_path(&self) -> (&str, &str);
+    /// Returns `None` if the URL does not contain a bucket and path.
+    fn bucket_and_path(&self, config: &S3Config) -> Option<(&str, &str)>;
 }
 
 impl UrlExt for Url {
-    fn region(&self) -> &str {
-        let domain = self.domain().expect("URL should have domain");
+    fn region(&self, config: &S3Config) -> Option<&str> {
+        if config.endpoint().is_some() {
+            return None;
+        }
+
+        let domain = self.domain()?;
 
         if domain.starts_with("s3.") || domain.starts_with("S3.") {
             // Path-style URL of the form https://s3.<region>.amazonaws.com/<bucket>/<path>
             let mut parts = domain.splitn(3, '.');
             match (parts.next(), parts.next()) {
-                (_, Some(region)) => region,
-                _ => panic!("invalid S3 URL"),
+                (_, Some(region)) => Some(region),
+                _ => None,
             }
         } else {
             // Virtual host style URL of the form https://<bucket>.s3.<region>.amazonaws.com/<path>
             let mut parts = domain.splitn(4, '.');
 
             match (parts.next(), parts.next(), parts.next()) {
-                (_, _, Some(region)) => region,
-                _ => panic!("invalid S3 URL"),
+                (_, _, Some(region)) => Some(region),
+                _ => None,
             }
         }
     }
 
-    fn bucket_and_path(&self) -> (&str, &str) {
-        let domain = self.domain().expect("URL should have domain");
+    fn bucket_and_path(&self, config: &S3Config) -> Option<(&str, &str)> {
+        let host = self.host_str()?;
 
-        if domain.starts_with("s3.") || domain.starts_with("S3.") {
-            // Path-style URL of the form https://s3.<region>.amazonaws.com/<bucket>/<path>
-            let bucket = self
-                .path_segments()
-                .expect("URL should have path")
-                .next()
-                .expect("URL should have at least one path segment");
-
-            (
-                bucket,
-                self.path()
-                    .strip_prefix('/')
-                    .unwrap()
-                    .strip_prefix(bucket)
-                    .unwrap(),
-            )
+        if config.endpoint().is_some() || host.starts_with("s3.") || host.starts_with("S3.") {
+            // Path-style URL (e.g. https://s3.<region>.amazonaws.com/<bucket>/<path>)
+            let bucket = self.path_segments()?.next()?;
+            Some((bucket, self.path().strip_prefix('/')?.strip_prefix(bucket)?))
         } else {
-            // Virtual host style URL of the form https://<bucket>.s3.<region>.amazonaws.com/<path>
-            let Some((bucket, _)) = domain.split_once('.') else {
-                panic!("URL domain does not contain a bucket");
-            };
-
-            (bucket, self.path())
+            // Virtual host style URL (e.g. https://<bucket>.s3.<region>.amazonaws.com/<path>)
+            let (bucket, _) = host.split_once('.')?;
+            Some((bucket, self.path()))
         }
+    }
+}
+
+/// Helper for formatting a URL's port.
+struct Port<'a>(&'a Url);
+
+impl fmt::Display for Port<'_> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        if let Some(port) = self.0.port() {
+            write!(f, ":{port}")?;
+        }
+
+        Ok(())
     }
 }
 
@@ -380,14 +390,12 @@ impl Upload for S3Upload {
             .header(header::USER_AGENT, USER_AGENT)
             .header(header::CONTENT_LENGTH, length)
             .header(header::CONTENT_TYPE, "application/octet-stream")
-            .header(AWS_DATE_HEADER, date.format("%Y%m%dT%H%M%SZ").to_string())
-            .header(AWS_CONTENT_SHA256_HEADER, &digest)
+            .header(X_AMZ_DATE, date.format("%Y%m%dT%H%M%SZ").to_string())
+            .header(X_AMZ_CONTENT_SHA256, &digest)
             .body(body)
             .build()?;
 
-        if let Some(auth) = self.config.s3().auth() {
-            insert_authentication_header(auth, date, &mut request)?;
-        }
+        insert_authentication_header(self.config.s3(), date, &mut request)?;
 
         let response = self.client.execute(request).await?;
         if !response.status().is_success() {
@@ -442,14 +450,12 @@ impl Upload for S3Upload {
             .header(header::USER_AGENT, USER_AGENT)
             .header(header::CONTENT_LENGTH, body.len())
             .header(header::CONTENT_TYPE, "application/xml")
-            .header(AWS_DATE_HEADER, date.format("%Y%m%dT%H%M%SZ").to_string())
-            .header(AWS_CONTENT_SHA256_HEADER, sha256_hex_string(&body))
+            .header(X_AMZ_DATE, date.format("%Y%m%dT%H%M%SZ").to_string())
+            .header(X_AMZ_CONTENT_SHA256, sha256_hex_string(&body))
             .body(body)
             .build()?;
 
-        if let Some(auth) = self.config.s3().auth() {
-            insert_authentication_header(auth, date, &mut request)?;
-        }
+        insert_authentication_header(self.config.s3(), date, &mut request)?;
 
         let response = self.client.execute(request).await?;
         if !response.status().is_success() {
@@ -534,40 +540,44 @@ impl StorageBackend for S3StorageBackend {
         Ok(block_size)
     }
 
-    fn is_supported_url(url: &Url) -> bool {
+    fn is_supported_url(config: &Config, url: &Url) -> bool {
         match url.scheme() {
             "s3" => true,
             "http" | "https" => {
-                let Some(domain) = url.domain() else {
+                let Some(host) = url.host_str() else {
                     return false;
                 };
 
-                if domain.starts_with("s3.") || domain.starts_with("S3.") {
+                if let Some(endpoint) = config.s3().endpoint().and_then(|e| e.host_str())
+                    && host.eq_ignore_ascii_case(endpoint)
+                {
+                    return true;
+                }
+
+                if host.starts_with("s3.") || host.starts_with("S3.") {
                     // Path-style URL of the form https://s3.<region>.amazonaws.com/<bucket>/<path>
-                    let domain = &domain[3..];
+                    let domain = &host[3..];
                     let Some((region, domain)) = domain.split_once('.') else {
                         return false;
                     };
 
                     // There must be at least two path segments
                     !region.is_empty()
-                        && (domain.eq_ignore_ascii_case(AWS_ROOT_DOMAIN)
-                            || domain.eq_ignore_ascii_case("localhost"))
+                        && domain.eq_ignore_ascii_case(AWS_ROOT_DOMAIN)
                         && url
                             .path_segments()
                             .map(|mut s| s.nth(1).is_some())
                             .unwrap_or(false)
                 } else {
                     // Virtual host style URL of the form https://<bucket>.s3.<region>.amazonaws.com/<path>
-                    let mut parts = domain.splitn(4, '.');
+                    let mut parts = host.splitn(4, '.');
                     match (parts.next(), parts.next(), parts.next(), parts.next()) {
                         (Some(bucket), Some(service), Some(region), Some(domain)) => {
                             // There must be at least one path segment
                             !bucket.is_empty()
                                 && !region.is_empty()
                                 && service.eq_ignore_ascii_case("s3")
-                                && (domain.eq_ignore_ascii_case(AWS_ROOT_DOMAIN)
-                                    || domain.eq_ignore_ascii_case("localhost"))
+                                && domain.eq_ignore_ascii_case(AWS_ROOT_DOMAIN)
                                 && url
                                     .path_segments()
                                     .map(|mut s| s.next().is_some())
@@ -592,30 +602,49 @@ impl StorageBackend for S3StorageBackend {
                     return Err(S3Error::InvalidScheme.into());
                 }
 
-                // If the S3 URL has a port, assume localhost
-                let (scheme, root, port) = if let Some(port) = url.port() {
-                    ("http", "localhost", Cow::Owned(format!(":{port}")))
+                let url = if let Some(endpoint) = config.s3().endpoint() {
+                    let scheme = endpoint.scheme();
+                    let host = endpoint.host_str().expect("URL should have a host");
+                    let port = Port(endpoint);
+                    match (url.query(), url.fragment()) {
+                        (None, None) => {
+                            format!("{scheme}://{host}{port}/{bucket}{path}")
+                        }
+                        (None, Some(fragment)) => {
+                            format!("{scheme}://{host}{port}/{bucket}{path}#{fragment}")
+                        }
+                        (Some(query), None) => {
+                            format!("{scheme}://{host}{port}/{bucket}{path}?{query}")
+                        }
+                        (Some(query), Some(fragment)) => {
+                            format!("{scheme}://{host}{port}/{bucket}{path}?{query}#{fragment}")
+                        }
+                    }
                 } else {
-                    ("https", AWS_ROOT_DOMAIN, Cow::Borrowed(""))
+                    let port = Port(url);
+                    match (url.query(), url.fragment()) {
+                        (None, None) => {
+                            format!("https://{bucket}.s3.{region}.{AWS_ROOT_DOMAIN}{port}{path}")
+                        }
+                        (None, Some(fragment)) => {
+                            format!(
+                                "https://{bucket}.s3.{region}.{AWS_ROOT_DOMAIN}{port}{path}#{fragment}"
+                            )
+                        }
+                        (Some(query), None) => {
+                            format!("https://{bucket}.s3.{region}.{AWS_ROOT_DOMAIN}{port}{path}?{query}")
+                        }
+                        (Some(query), Some(fragment)) => {
+                            format!(
+                            "https://{bucket}.s3.{region}.{AWS_ROOT_DOMAIN}{port}{path}?{query}#{fragment}"
+                        )
+                        }
+                    }
                 };
 
-                match (url.query(), url.fragment()) {
-                    (None, None) => format!("{scheme}://{bucket}.s3.{region}.{root}{port}{path}"),
-                    (None, Some(fragment)) => {
-                        format!("{scheme}://{bucket}.s3.{region}.{root}{port}{path}#{fragment}")
-                    }
-                    (Some(query), None) => {
-                        format!("{scheme}://{bucket}.s3.{region}.{root}{port}{path}?{query}")
-                    }
-                    (Some(query), Some(fragment)) => {
-                        format!(
-                            "{scheme}://{bucket}.s3.{region}.{root}{port}{path}?{query}#{fragment}"
-                        )
-                    }
-                }
-                .parse()
-                .map(Cow::Owned)
-                .map_err(|_| S3Error::InvalidScheme.into())
+                url.parse()
+                    .map(Cow::Owned)
+                    .map_err(|_| S3Error::InvalidScheme.into())
             }
             _ => Ok(Cow::Borrowed(url)),
         }
@@ -634,7 +663,7 @@ impl StorageBackend for S3StorageBackend {
 
     async fn head(&self, url: Url, must_exist: bool) -> Result<Response> {
         debug_assert!(
-            Self::is_supported_url(&url),
+            Self::is_supported_url(&self.config, &url),
             "{url} is not a supported S3 URL",
             url = url.as_str()
         );
@@ -646,13 +675,11 @@ impl StorageBackend for S3StorageBackend {
             .client
             .head(url)
             .header(header::USER_AGENT, USER_AGENT)
-            .header(AWS_DATE_HEADER, date.format("%Y%m%dT%H%M%SZ").to_string())
-            .header(AWS_CONTENT_SHA256_HEADER, sha256_hex_string([]))
+            .header(X_AMZ_DATE, date.format("%Y%m%dT%H%M%SZ").to_string())
+            .header(X_AMZ_CONTENT_SHA256, sha256_hex_string([]))
             .build()?;
 
-        if let Some(auth) = self.config.s3().auth() {
-            insert_authentication_header(auth, date, &mut request)?;
-        }
+        insert_authentication_header(self.config.s3(), date, &mut request)?;
 
         let response = self.client.execute(request).await?;
         if !response.status().is_success() {
@@ -670,7 +697,7 @@ impl StorageBackend for S3StorageBackend {
 
     async fn get(&self, url: Url) -> Result<Response> {
         debug_assert!(
-            Self::is_supported_url(&url),
+            Self::is_supported_url(&self.config, &url),
             "{url} is not a supported S3 URL",
             url = url.as_str()
         );
@@ -682,13 +709,11 @@ impl StorageBackend for S3StorageBackend {
             .client
             .get(url)
             .header(header::USER_AGENT, USER_AGENT)
-            .header(AWS_DATE_HEADER, date.format("%Y%m%dT%H%M%SZ").to_string())
-            .header(AWS_CONTENT_SHA256_HEADER, sha256_hex_string([]))
+            .header(X_AMZ_DATE, date.format("%Y%m%dT%H%M%SZ").to_string())
+            .header(X_AMZ_CONTENT_SHA256, sha256_hex_string([]))
             .build()?;
 
-        if let Some(auth) = self.config.s3().auth() {
-            insert_authentication_header(auth, date, &mut request)?;
-        }
+        insert_authentication_header(self.config.s3(), date, &mut request)?;
 
         let response = self.client.execute(request).await?;
         if !response.status().is_success() {
@@ -706,7 +731,7 @@ impl StorageBackend for S3StorageBackend {
         exclusive_end: Option<u64>,
     ) -> Result<Response> {
         debug_assert!(
-            Self::is_supported_url(&url),
+            Self::is_supported_url(&self.config, &url),
             "{url} is not a supported S3 URL",
             url = url.as_str()
         );
@@ -724,15 +749,13 @@ impl StorageBackend for S3StorageBackend {
             .client
             .get(url)
             .header(header::USER_AGENT, USER_AGENT)
-            .header(AWS_DATE_HEADER, date.format("%Y%m%dT%H%M%SZ").to_string())
-            .header(AWS_CONTENT_SHA256_HEADER, sha256_hex_string([]))
+            .header(X_AMZ_DATE, date.format("%Y%m%dT%H%M%SZ").to_string())
+            .header(X_AMZ_CONTENT_SHA256, sha256_hex_string([]))
             .header(header::RANGE, range)
             .header(header::IF_MATCH, etag)
             .build()?;
 
-        if let Some(auth) = self.config.s3().auth() {
-            insert_authentication_header(auth, date, &mut request)?;
-        }
+        insert_authentication_header(self.config.s3(), date, &mut request)?;
 
         let response = self.client.execute(request).await?;
         let status = response.status();
@@ -759,14 +782,16 @@ impl StorageBackend for S3StorageBackend {
         // See: https://docs.aws.amazon.com/AmazonS3/latest/API/API_ListObjectsV2.html
 
         debug_assert!(
-            Self::is_supported_url(&url),
+            Self::is_supported_url(&self.config, &url),
             "{url} is not a supported S3 URL",
             url = url.as_str()
         );
 
         debug!("walking `{url}` as a directory", url = url.display());
 
-        let (bucket, path) = url.bucket_and_path();
+        let (bucket, path) = url
+            .bucket_and_path(self.config.s3())
+            .ok_or(S3Error::MissingBucket)?;
 
         let mut prefix = path.strip_prefix('/').unwrap_or(path).to_string();
         // The prefix should end with `/` to signify a directory.
@@ -774,13 +799,17 @@ impl StorageBackend for S3StorageBackend {
             prefix.push('/');
         }
 
-        // Format the request to always use the virtual-host style URL
-        let domain = url.domain().expect("URL should have domain");
-        if domain.starts_with("s3") || domain.starts_with("S3") {
-            // Set the host to a virtual host
-            url.set_host(Some(&format!("{bucket}.{domain}")))
-                .map_err(|_| S3Error::InvalidBucketName)?;
-        }
+        // If not already a virtual-style URI, format the host header to be a
+        // virtual-style host; this is required for ListObjectsV2
+        let host = url.host_str().expect("URL should have a host");
+        let host = if self.config.s3().endpoint().is_some()
+            || host.starts_with("s3")
+            || host.starts_with("S3")
+        {
+            Some(format!("{bucket}.{host}{port}", port = Port(&url)))
+        } else {
+            None
+        };
 
         url.set_path("/");
 
@@ -812,13 +841,16 @@ impl StorageBackend for S3StorageBackend {
                 .client
                 .get(url)
                 .header(header::USER_AGENT, USER_AGENT)
-                .header(AWS_DATE_HEADER, date.format("%Y%m%dT%H%M%SZ").to_string())
-                .header(AWS_CONTENT_SHA256_HEADER, sha256_hex_string([]))
-                .build()?;
+                .header(X_AMZ_DATE, date.format("%Y%m%dT%H%M%SZ").to_string())
+                .header(X_AMZ_CONTENT_SHA256, sha256_hex_string([]));
 
-            if let Some(auth) = self.config.s3().auth() {
-                insert_authentication_header(auth, date, &mut request)?;
+            if let Some(host) = &host {
+                request = request.header(header::HOST, host);
             }
+
+            let mut request = request.build()?;
+
+            insert_authentication_header(self.config.s3(), date, &mut request)?;
 
             let response = self.client.execute(request).await?;
 
@@ -863,7 +895,7 @@ impl StorageBackend for S3StorageBackend {
         // See: https://docs.aws.amazon.com/AmazonS3/latest/API/API_CreateMultipartUpload.html
 
         debug_assert!(
-            Self::is_supported_url(&url),
+            Self::is_supported_url(&self.config, &url),
             "{url} is not a supported S3 URL",
             url = url.as_str()
         );
@@ -878,22 +910,21 @@ impl StorageBackend for S3StorageBackend {
             .client
             .post(create)
             .header(header::USER_AGENT, USER_AGENT)
-            .header(AWS_DATE_HEADER, date.format("%Y%m%dT%H%M%SZ").to_string())
-            .header(AWS_CONTENT_SHA256_HEADER, sha256_hex_string([]))
+            .header(header::CONTENT_LENGTH, "0")
+            .header(X_AMZ_DATE, date.format("%Y%m%dT%H%M%SZ").to_string())
+            .header(X_AMZ_CONTENT_SHA256, sha256_hex_string([]))
             .build()?;
 
         if let Some(digest) = digest {
             request.headers_mut().insert(
-                AWS_CONTENT_DIGEST_HEADER,
+                X_AMZ_META_CONTENT_DIGEST,
                 digest
                     .try_into()
                     .expect("invalid content digest header value"),
             );
         }
 
-        if let Some(auth) = self.config.s3().auth() {
-            insert_authentication_header(auth, date, &mut request)?;
-        }
+        insert_authentication_header(self.config.s3(), date, &mut request)?;
 
         let response = self.client.execute(request).await?;
         let status = response.status();

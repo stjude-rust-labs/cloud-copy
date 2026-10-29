@@ -22,6 +22,7 @@ use tokio_retry2::strategy::ExponentialFactorBackoff;
 use tokio_retry2::strategy::MaxInterval;
 use tokio_util::sync::CancellationToken;
 use tracing::info;
+use url::Url;
 
 /// The default number of retries for network operations.
 const DEFAULT_RETRIES: usize = 5;
@@ -208,6 +209,9 @@ pub struct S3Config {
     /// If `None`, no authentication header will be put on requests.
     #[serde(default)]
     auth: Option<S3AuthConfig>,
+    /// Stores the endpoint of an S3-compatible service.
+    #[serde(default)]
+    endpoint: Option<Url>,
 }
 
 impl S3Config {
@@ -242,6 +246,33 @@ impl S3Config {
         self
     }
 
+    /// Sets the endpoint of an S3-compatible service (e.g. MinIO or Ceph).
+    ///
+    /// Only the scheme, host, and port of the endpoint are used; for example,
+    /// `http://localhost:9000`.
+    ///
+    /// When set, `s3` schemed URLs are sent to the endpoint instead of AWS, and
+    /// `http` and `https` URLs for the endpoint are treated as S3 URLs.
+    ///
+    /// Requests to the endpoint are signed for the configured region, which
+    /// defaults to `us-east-1`.
+    ///
+    /// Defaults to the AWS S3 endpoints.
+    pub fn with_endpoint(mut self, endpoint: Url) -> Self {
+        self.endpoint = Some(endpoint);
+        self
+    }
+
+    /// Sets the endpoint of an S3-compatible service.
+    ///
+    /// If `None`, the AWS S3 endpoints are used.
+    ///
+    /// See [`S3Config::with_endpoint`].
+    pub fn with_maybe_endpoint(mut self, endpoint: Option<Url>) -> Self {
+        self.endpoint = endpoint;
+        self
+    }
+
     /// Gets the default region to apply to `s3` schemed URLs.
     ///
     /// Defaults to `us-east-1`
@@ -254,6 +285,13 @@ impl S3Config {
     /// Returns `None` if requests are not using authentication.
     pub fn auth(&self) -> Option<&S3AuthConfig> {
         self.auth.as_ref()
+    }
+
+    /// Gets the endpoint of an S3-compatible service.
+    ///
+    /// Returns `None` if the AWS S3 endpoints are used.
+    pub fn endpoint(&self) -> Option<&Url> {
+        self.endpoint.as_ref()
     }
 }
 

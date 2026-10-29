@@ -1,5 +1,6 @@
 //! Cloud storage copy utility.
 
+use std::env;
 use std::io::IsTerminal;
 use std::io::stderr;
 use std::path::PathBuf;
@@ -36,6 +37,7 @@ use tracing::level_filters::LevelFilter;
 use tracing_indicatif::IndicatifLayer;
 use tracing_subscriber::EnvFilter;
 use tracing_subscriber::layer::SubscriberExt;
+use url::Url;
 
 git_testament!(TESTAMENT);
 
@@ -72,6 +74,23 @@ impl std::fmt::Display for ColorMode {
             Self::Never => write!(f, "never"),
         }
     }
+}
+
+/// Parses and validates the URL of an S3 endpoint.
+fn parse_endpoint_url(s: &str) -> Result<Url> {
+    let url: Url = s
+        .parse()
+        .with_context(|| format!("invalid endpoint URL `{s}`"))?;
+
+    if !matches!(url.scheme(), "http" | "https") || url.host_str().is_none() {
+        bail!("endpoint URL `{s}` must use a `http` or `https` scheme");
+    }
+
+    if url.path() != "/" || url.query().is_some() || url.fragment().is_some() {
+        bail!("endpoint URL `{s}` cannot specify a path, query parameters, or a fragment");
+    }
+
+    Ok(url)
 }
 
 /// A utility for transferring files to and from cloud storage services.
@@ -150,6 +169,10 @@ struct Args {
     #[clap(long, env, value_name = "REGION")]
     aws_default_region: Option<String>,
 
+    /// The endpoint URL to use for S3 requests (e.g. `http://localhost:9000`).
+    #[clap(long, value_name = "URL", value_parser = parse_endpoint_url)]
+    aws_endpoint_url: Option<Url>,
+
     /// The Google Cloud Storage HMAC access key to use.
     #[clap(long, env, value_name = "KEY", requires = "google_hmac_secret")]
     google_hmac_access_key: Option<String>,
@@ -176,7 +199,7 @@ struct Args {
 impl Args {
     /// Converts the arguments into a `Config`, HTTP client, source, and
     /// destination.
-    fn into_parts(self) -> (Config, HttpClient, String, String) {
+    fn into_parts(self) -> Result<(Config, HttpClient, String, String)> {
         let azure = if let (Some(account_name), Some(access_key)) =
             (self.azure_account_name, self.azure_access_key)
         {
@@ -191,7 +214,23 @@ impl Args {
             } else {
                 S3Config::default()
             }
-            .with_maybe_region(self.aws_default_region);
+            .with_maybe_region(self.aws_default_region)
+            .with_maybe_endpoint(
+                // If the endpoint option was not specified and
+                // `AWS_IGNORE_CONFIGURED_ENDPOINT_URLS` is not set then fallback with
+                // `AWS_ENDPOINT_URL_S3` followed by `AWS_ENDPOINT_URL`.
+                self.aws_endpoint_url.or(
+                    if env::var("AWS_IGNORE_CONFIGURED_ENDPOINT_URLS").is_err() {
+                        env::var("AWS_ENDPOINT_URL_S3")
+                            .ok()
+                            .or_else(|| env::var("AWS_ENDPOINT_URL").ok())
+                            .map(|s| parse_endpoint_url(&s))
+                            .transpose()?
+                    } else {
+                        None
+                    },
+                ),
+            );
 
         let google = if let (Some(access_key), Some(secret)) =
             (self.google_hmac_access_key, self.google_hmac_secret)
@@ -218,7 +257,7 @@ impl Args {
             .map(|dir| HttpClient::new_with_cache(config.clone(), dir))
             .unwrap_or_default();
 
-        (config, client, self.source, self.destination)
+        Ok((config, client, self.source, self.destination))
     }
 }
 
@@ -275,7 +314,7 @@ async fn run(cancel: CancellationToken) -> Result<()> {
 
     let start = Utc::now();
 
-    let (config, client, source, destination) = args.into_parts();
+    let (config, client, source, destination) = args.into_parts()?;
     let result = copy(
         config,
         client,
