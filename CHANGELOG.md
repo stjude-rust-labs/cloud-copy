@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## Unreleased
 
+## 0.12.0 - 10-29-2026
+
 ### Added
 
 * Added an `endpoint` option to `cloud-copy` to specify a custom S3 endpoint
