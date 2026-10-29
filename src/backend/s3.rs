@@ -219,10 +219,11 @@ trait UrlExt {
     /// Returns `None` if the URL does not contain a region.
     fn region(&self, config: &S3Config) -> Option<&str>;
 
-    /// Extracts the bucket name and object path from the URL.
+    /// Extracts the bucket name, object path, and whether or not the URL uses
+    /// the "virtual host" form.
     ///
     /// Returns `None` if the URL does not contain a bucket and path.
-    fn bucket_and_path(&self, config: &S3Config) -> Option<(&str, &str)>;
+    fn bucket_and_path(&self, config: &S3Config) -> Option<(&str, &str, bool)>;
 }
 
 impl UrlExt for Url {
@@ -266,17 +267,21 @@ impl UrlExt for Url {
         }
     }
 
-    fn bucket_and_path(&self, config: &S3Config) -> Option<(&str, &str)> {
+    fn bucket_and_path(&self, config: &S3Config) -> Option<(&str, &str, bool)> {
         let host = self.host_str()?;
 
         if self.is_endpoint_url(config) || host.starts_with("s3.") || host.starts_with("S3.") {
             // Path-style URL (e.g. https://s3.<region>.amazonaws.com/<bucket>/<path>)
             let bucket = self.path_segments()?.next()?;
-            Some((bucket, self.path().strip_prefix('/')?.strip_prefix(bucket)?))
+            Some((
+                bucket,
+                self.path().strip_prefix('/')?.strip_prefix(bucket)?,
+                false,
+            ))
         } else {
             // Virtual host style URL (e.g. https://<bucket>.s3.<region>.amazonaws.com/<path>)
             let (bucket, _) = host.split_once('.')?;
-            Some((bucket, self.path()))
+            Some((bucket, self.path(), true))
         }
     }
 }
@@ -793,7 +798,7 @@ impl StorageBackend for S3StorageBackend {
 
         debug!("walking `{url}` as a directory", url = url.display());
 
-        let (bucket, path) = url
+        let (bucket, path, is_virtual) = url
             .bucket_and_path(self.config.s3())
             .ok_or(S3Error::MissingBucket)?;
 
@@ -803,19 +808,14 @@ impl StorageBackend for S3StorageBackend {
             prefix.push('/');
         }
 
-        // If not already a virtual-style URI, format the host header to be a
-        // virtual-style host; this is required for ListObjectsV2
-        let host = url.host_str().expect("URL should have a host");
-        let host = if self.config.s3().endpoint().is_some()
-            || host.starts_with("s3")
-            || host.starts_with("S3")
-        {
-            Some(format!("{bucket}.{host}{port}", port = Port(&url)))
+        // If the request URL is virtual-host style, use a `/` path for the
+        // request
+        if is_virtual {
+            url.set_path("/");
         } else {
-            None
-        };
-
-        url.set_path("/");
+            // Otherwise, use only the bucket
+            url.set_path(&format!("/{bucket}"));
+        }
 
         {
             let mut pairs = url.query_pairs_mut();
@@ -846,13 +846,8 @@ impl StorageBackend for S3StorageBackend {
                 .get(url)
                 .header(header::USER_AGENT, USER_AGENT)
                 .header(X_AMZ_DATE, date.format("%Y%m%dT%H%M%SZ").to_string())
-                .header(X_AMZ_CONTENT_SHA256, sha256_hex_string([]));
-
-            if let Some(host) = &host {
-                request = request.header(header::HOST, host);
-            }
-
-            let mut request = request.build()?;
+                .header(X_AMZ_CONTENT_SHA256, sha256_hex_string([]))
+                .build()?;
 
             insert_authentication_header(self.config.s3(), date, &mut request)?;
 
