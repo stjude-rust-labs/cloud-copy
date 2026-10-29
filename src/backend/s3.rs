@@ -211,6 +211,9 @@ fn insert_authentication_header(
 
 /// URL extensions for S3.
 trait UrlExt {
+    /// Determines if the URL matches the configured custom endpoint.
+    fn is_endpoint_url(&self, config: &S3Config) -> bool;
+
     /// Extracts the region from the URL.
     ///
     /// Returns `None` if the URL does not contain a region.
@@ -223,13 +226,29 @@ trait UrlExt {
 }
 
 impl UrlExt for Url {
+    fn is_endpoint_url(&self, config: &S3Config) -> bool {
+        let Some(endpoint) = config.endpoint() else {
+            return false;
+        };
+        let Some(host) = self.host_str() else {
+            return false;
+        };
+        let Some(endpoint_host) = endpoint.host_str() else {
+            return false;
+        };
+
+        // To be an endpoint URL, the scheme, host, and ports must match
+        self.scheme() == endpoint.scheme()
+            && host.eq_ignore_ascii_case(endpoint_host)
+            && self.port_or_known_default() == endpoint.port_or_known_default()
+    }
+
     fn region(&self, config: &S3Config) -> Option<&str> {
-        if config.endpoint().is_some() {
+        if self.is_endpoint_url(config) {
             return None;
         }
 
         let domain = self.domain()?;
-
         if domain.starts_with("s3.") || domain.starts_with("S3.") {
             // Path-style URL of the form https://s3.<region>.amazonaws.com/<bucket>/<path>
             let mut parts = domain.splitn(3, '.');
@@ -240,7 +259,6 @@ impl UrlExt for Url {
         } else {
             // Virtual host style URL of the form https://<bucket>.s3.<region>.amazonaws.com/<path>
             let mut parts = domain.splitn(4, '.');
-
             match (parts.next(), parts.next(), parts.next()) {
                 (_, _, Some(region)) => Some(region),
                 _ => None,
@@ -251,7 +269,7 @@ impl UrlExt for Url {
     fn bucket_and_path(&self, config: &S3Config) -> Option<(&str, &str)> {
         let host = self.host_str()?;
 
-        if config.endpoint().is_some() || host.starts_with("s3.") || host.starts_with("S3.") {
+        if self.is_endpoint_url(config) || host.starts_with("s3.") || host.starts_with("S3.") {
             // Path-style URL (e.g. https://s3.<region>.amazonaws.com/<bucket>/<path>)
             let bucket = self.path_segments()?.next()?;
             Some((bucket, self.path().strip_prefix('/')?.strip_prefix(bucket)?))
@@ -531,21 +549,14 @@ impl StorageBackend for S3StorageBackend {
         match url.scheme() {
             "s3" => true,
             "http" | "https" => {
+                // If the URL is for the custom endpoint, it is supported
+                if url.is_endpoint_url(config.s3()) {
+                    return true;
+                }
+
                 let Some(host) = url.host_str() else {
                     return false;
                 };
-
-                // If the url matches the configured endpoint's host and port,
-                // then it is supported
-                if let Some((endpoint_host, endpoint_port)) = config
-                    .s3()
-                    .endpoint()
-                    .and_then(|e| Some((e.host_str()?, e.port_or_known_default())))
-                    && host.eq_ignore_ascii_case(endpoint_host)
-                    && url.port_or_known_default() == endpoint_port
-                {
-                    return true;
-                }
 
                 if host.starts_with("s3.") || host.starts_with("S3.") {
                     // Path-style URL of the form https://s3.<region>.amazonaws.com/<bucket>/<path>

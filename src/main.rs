@@ -76,23 +76,6 @@ impl std::fmt::Display for ColorMode {
     }
 }
 
-/// Parses and validates the URL of an S3 endpoint.
-fn parse_endpoint_url(s: &str) -> Result<Url> {
-    let url: Url = s
-        .parse()
-        .with_context(|| format!("invalid endpoint URL `{s}`"))?;
-
-    if !matches!(url.scheme(), "http" | "https") || url.host_str().is_none() {
-        bail!("endpoint URL `{s}` must use a `http` or `https` scheme");
-    }
-
-    if url.path() != "/" || url.query().is_some() || url.fragment().is_some() {
-        bail!("endpoint URL `{s}` cannot specify a path, query parameters, or a fragment");
-    }
-
-    Ok(url)
-}
-
 /// A utility for transferring files to and from cloud storage services.
 #[derive(Parser, Debug)]
 #[command(version = render_testament!(TESTAMENT), propagate_version = true)]
@@ -170,7 +153,7 @@ struct Args {
     aws_default_region: Option<String>,
 
     /// The endpoint URL to use for S3 requests (e.g. `http://localhost:9000`).
-    #[clap(long, value_name = "URL", value_parser = parse_endpoint_url)]
+    #[clap(long, value_name = "URL")]
     aws_endpoint_url: Option<Url>,
 
     /// The Google Cloud Storage HMAC access key to use.
@@ -217,21 +200,27 @@ impl Args {
             .with_maybe_region(self.aws_default_region)
             .with_maybe_endpoint(
                 // If the endpoint option was not specified and
-                // `AWS_IGNORE_CONFIGURED_ENDPOINT_URLS` is not set then
+                // `AWS_IGNORE_CONFIGURED_ENDPOINT_URLS` is not `true` then
                 // fallback with `AWS_ENDPOINT_URL_S3` followed by
                 // `AWS_ENDPOINT_URL`.
                 self.aws_endpoint_url.or(
-                    if env::var("AWS_IGNORE_CONFIGURED_ENDPOINT_URLS").is_err() {
+                    if !env::var("AWS_IGNORE_CONFIGURED_ENDPOINT_URLS")
+                        .map(|v| v == "true")
+                        .unwrap_or(false)
+                    {
                         env::var("AWS_ENDPOINT_URL_S3")
                             .ok()
                             .or_else(|| env::var("AWS_ENDPOINT_URL").ok())
-                            .map(|s| parse_endpoint_url(&s))
+                            .map(|s| {
+                                s.parse()
+                                    .with_context(|| format!("invalid endpoint URL `{s}`"))
+                            })
                             .transpose()?
                     } else {
                         None
                     },
                 ),
-            );
+            )?;
 
         let google = if let (Some(access_key), Some(secret)) =
             (self.google_hmac_access_key, self.google_hmac_secret)

@@ -1216,7 +1216,11 @@ mod test {
 
         let config = Config::builder()
             .with_azure(AzureConfig::default())
-            .with_s3(S3Config::default().with_endpoint("http://localhost:9000".parse().unwrap()))
+            .with_s3(
+                S3Config::default()
+                    .with_endpoint("http://localhost:9000".parse().unwrap())
+                    .unwrap(),
+            )
             .build();
 
         assert_eq!(

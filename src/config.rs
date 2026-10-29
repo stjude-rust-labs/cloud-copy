@@ -10,6 +10,8 @@ use std::sync::Arc;
 use std::thread::available_parallelism;
 use std::time::Duration;
 
+use anyhow::Result;
+use anyhow::bail;
 use base64::Engine;
 use base64::prelude::BASE64_STANDARD;
 use digest_io::IoWrapper;
@@ -258,9 +260,25 @@ impl S3Config {
     /// defaults to `us-east-1`.
     ///
     /// Defaults to the AWS S3 endpoints.
-    pub fn with_endpoint(mut self, endpoint: Url) -> Self {
+    pub fn with_endpoint(mut self, endpoint: Url) -> Result<Self> {
+        if !matches!(endpoint.scheme(), "http" | "https") || endpoint.host_str().is_none() {
+            bail!("endpoint URL `{endpoint}` must use a `http` or `https` scheme");
+        }
+
+        if endpoint.path() != "/" {
+            bail!("endpoint URL `{endpoint}` cannot specify a path");
+        }
+
+        if endpoint.query().is_some() {
+            bail!("endpoint URL `{endpoint}` cannot specify query parameters");
+        }
+
+        if endpoint.fragment().is_some() {
+            bail!("endpoint URL `{endpoint}` cannot specify a fragment");
+        }
+
         self.endpoint = Some(endpoint);
-        self
+        Ok(self)
     }
 
     /// Sets the endpoint of an S3-compatible service.
@@ -268,9 +286,12 @@ impl S3Config {
     /// If `None`, the AWS S3 endpoints are used.
     ///
     /// See [`S3Config::with_endpoint`].
-    pub fn with_maybe_endpoint(mut self, endpoint: Option<Url>) -> Self {
-        self.endpoint = endpoint;
-        self
+    pub fn with_maybe_endpoint(self, endpoint: Option<Url>) -> Result<Self> {
+        if let Some(endpoint) = endpoint {
+            return self.with_endpoint(endpoint);
+        }
+
+        Ok(self)
     }
 
     /// Gets the default region to apply to `s3` schemed URLs.
@@ -671,5 +692,65 @@ impl Config {
         ExponentialFactorBackoff::from_millis(INITIAL_DELAY_MILLIS, BASE_FACTOR)
             .max_duration(MAX_DURATION)
             .take(self.retries())
+    }
+}
+
+#[cfg(test)]
+mod test {
+    use super::*;
+
+    #[test]
+    fn s3_endpoint_is_valid() {
+        S3Config::default()
+            .with_endpoint("http://localhost:9000".parse().unwrap())
+            .unwrap();
+
+        S3Config::default()
+            .with_endpoint("https://localhost/".parse().unwrap())
+            .unwrap();
+    }
+
+    #[test]
+    fn s3_endpoint_must_use_http_scheme() {
+        let err = S3Config::default()
+            .with_endpoint("foo://bar".parse().unwrap())
+            .unwrap_err();
+        assert_eq!(
+            err.to_string(),
+            "endpoint URL `foo://bar` must use a `http` or `https` scheme"
+        );
+    }
+
+    #[test]
+    fn s3_endpoint_cannot_have_a_path() {
+        let err = S3Config::default()
+            .with_endpoint("http://localhost:9000/foo".parse().unwrap())
+            .unwrap_err();
+        assert_eq!(
+            err.to_string(),
+            "endpoint URL `http://localhost:9000/foo` cannot specify a path"
+        );
+    }
+
+    #[test]
+    fn s3_endpoint_cannot_have_query_parameters() {
+        let err = S3Config::default()
+            .with_endpoint("http://localhost:9000/?foo=bar".parse().unwrap())
+            .unwrap_err();
+        assert_eq!(
+            err.to_string(),
+            "endpoint URL `http://localhost:9000/?foo=bar` cannot specify query parameters"
+        );
+    }
+
+    #[test]
+    fn s3_endpoint_cannot_have_a_fragment() {
+        let err = S3Config::default()
+            .with_endpoint("http://localhost:9000/#foo".parse().unwrap())
+            .unwrap_err();
+        assert_eq!(
+            err.to_string(),
+            "endpoint URL `http://localhost:9000/#foo` cannot specify a fragment"
+        );
     }
 }

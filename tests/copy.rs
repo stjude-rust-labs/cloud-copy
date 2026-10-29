@@ -182,6 +182,7 @@ fn s3_config() -> S3Config {
     S3Config::default()
         .with_auth("test", "test")
         .with_endpoint("http://localhost:4566".parse().unwrap())
+        .unwrap()
 }
 
 fn config(overwrite: bool) -> Config {
