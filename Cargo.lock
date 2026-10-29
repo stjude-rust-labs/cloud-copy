@@ -359,6 +359,7 @@ dependencies = [
  "secrecy",
  "serde",
  "serde-xml-rs",
+ "serde_json",
  "sha2 0.11.1",
  "tempfile",
  "thiserror",

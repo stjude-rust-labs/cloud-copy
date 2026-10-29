@@ -58,17 +58,17 @@ const MAX_PART_SIZE: u64 = MIN_PART_SIZE * 1024;
 const MAX_FILE_SIZE: u64 = MAX_PART_SIZE * 1024;
 
 /// The Google date header name.
-const GOOGLE_DATE_HEADER: &str = "x-goog-date";
+const X_GOOG_DATE: &str = "x-goog-date";
 
 /// The Google content SHA256 header name.
 ///
 /// This is the SHA256 of each upload part for multipart uploads.
-const GOOGLE_CONTENT_SHA256_HEADER: &str = "x-goog-content-sha256";
+const X_GOOG_CONTENT_SHA256: &str = "x-goog-content-sha256";
 
-/// The Google content digest header name.
+/// The Google metadata content digest header name.
 ///
 /// This is the content digest for the entire object.
-pub(crate) const GOOGLE_CONTENT_DIGEST_HEADER: &str = "x-goog-meta-content-digest";
+pub(crate) const X_GOOG_META_CONTENT_DIGEST: &str = "x-goog-meta-content-digest";
 
 /// Represents a Google-specific copy operation error.
 #[derive(Debug, thiserror::Error)]
@@ -128,12 +128,18 @@ impl SignatureProvider for GoogleSignatureProvider<'_> {
         "storage"
     }
 
-    fn date_header_name(&self) -> &str {
-        GOOGLE_DATE_HEADER
+    fn canonical_header_names(&self) -> &[&str] {
+        // The list must be sorted alphabetically
+        &[
+            "host",
+            X_GOOG_CONTENT_SHA256,
+            X_GOOG_DATE,
+            X_GOOG_META_CONTENT_DIGEST,
+        ]
     }
 
     fn content_hash_header_name(&self) -> &str {
-        GOOGLE_CONTENT_SHA256_HEADER
+        X_GOOG_CONTENT_SHA256
     }
 
     fn access_key_id(&self) -> &str {
@@ -314,11 +320,8 @@ impl Upload for GoogleUpload {
             .header(header::USER_AGENT, USER_AGENT)
             .header(header::CONTENT_LENGTH, length)
             .header(header::CONTENT_TYPE, "application/octet-stream")
-            .header(
-                GOOGLE_DATE_HEADER,
-                date.format("%Y%m%dT%H%M%SZ").to_string(),
-            )
-            .header(GOOGLE_CONTENT_SHA256_HEADER, &digest)
+            .header(X_GOOG_DATE, date.format("%Y%m%dT%H%M%SZ").to_string())
+            .header(X_GOOG_CONTENT_SHA256, &digest)
             .body(body)
             .build()?;
 
@@ -378,11 +381,8 @@ impl Upload for GoogleUpload {
             .header(header::USER_AGENT, USER_AGENT)
             .header(header::CONTENT_LENGTH, body.len())
             .header(header::CONTENT_TYPE, "application/xml")
-            .header(
-                GOOGLE_DATE_HEADER,
-                date.format("%Y%m%dT%H%M%SZ").to_string(),
-            )
-            .header(GOOGLE_CONTENT_SHA256_HEADER, sha256_hex_string(&body))
+            .header(X_GOOG_DATE, date.format("%Y%m%dT%H%M%SZ").to_string())
+            .header(X_GOOG_CONTENT_SHA256, sha256_hex_string(&body))
             .body(body)
             .build()?;
 
@@ -473,7 +473,7 @@ impl StorageBackend for GoogleStorageBackend {
         Ok(block_size)
     }
 
-    fn is_supported_url(url: &Url) -> bool {
+    fn is_supported_url(_: &Config, url: &Url) -> bool {
         match url.scheme() {
             "gs" => true,
             "http" | "https" => {
@@ -550,7 +550,7 @@ impl StorageBackend for GoogleStorageBackend {
 
     async fn head(&self, url: Url, must_exist: bool) -> Result<Response> {
         debug_assert!(
-            Self::is_supported_url(&url),
+            Self::is_supported_url(&self.config, &url),
             "{url} is not a supported GCS URL",
             url = url.as_str()
         );
@@ -562,11 +562,8 @@ impl StorageBackend for GoogleStorageBackend {
             .client
             .head(url)
             .header(header::USER_AGENT, USER_AGENT)
-            .header(
-                GOOGLE_DATE_HEADER,
-                date.format("%Y%m%dT%H%M%SZ").to_string(),
-            )
-            .header(GOOGLE_CONTENT_SHA256_HEADER, sha256_hex_string([]))
+            .header(X_GOOG_DATE, date.format("%Y%m%dT%H%M%SZ").to_string())
+            .header(X_GOOG_CONTENT_SHA256, sha256_hex_string([]))
             .build()?;
 
         if let Some(auth) = self.config.google().auth() {
@@ -589,7 +586,7 @@ impl StorageBackend for GoogleStorageBackend {
 
     async fn get(&self, url: Url) -> Result<Response> {
         debug_assert!(
-            Self::is_supported_url(&url),
+            Self::is_supported_url(&self.config, &url),
             "{url} is not a supported GCS URL",
             url = url.as_str()
         );
@@ -601,11 +598,8 @@ impl StorageBackend for GoogleStorageBackend {
             .client
             .get(url)
             .header(header::USER_AGENT, USER_AGENT)
-            .header(
-                GOOGLE_DATE_HEADER,
-                date.format("%Y%m%dT%H%M%SZ").to_string(),
-            )
-            .header(GOOGLE_CONTENT_SHA256_HEADER, sha256_hex_string([]))
+            .header(X_GOOG_DATE, date.format("%Y%m%dT%H%M%SZ").to_string())
+            .header(X_GOOG_CONTENT_SHA256, sha256_hex_string([]))
             .build()?;
 
         if let Some(auth) = self.config.google().auth() {
@@ -628,7 +622,7 @@ impl StorageBackend for GoogleStorageBackend {
         exclusive_end: Option<u64>,
     ) -> Result<Response> {
         debug_assert!(
-            Self::is_supported_url(&url),
+            Self::is_supported_url(&self.config, &url),
             "{url} is not a supported GCS URL",
             url = url.as_str()
         );
@@ -646,11 +640,8 @@ impl StorageBackend for GoogleStorageBackend {
             .client
             .get(url)
             .header(header::USER_AGENT, USER_AGENT)
-            .header(
-                GOOGLE_DATE_HEADER,
-                date.format("%Y%m%dT%H%M%SZ").to_string(),
-            )
-            .header(GOOGLE_CONTENT_SHA256_HEADER, sha256_hex_string([]))
+            .header(X_GOOG_DATE, date.format("%Y%m%dT%H%M%SZ").to_string())
+            .header(X_GOOG_CONTENT_SHA256, sha256_hex_string([]))
             .header(header::RANGE, range)
             .header(header::IF_MATCH, etag)
             .build()?;
@@ -684,7 +675,7 @@ impl StorageBackend for GoogleStorageBackend {
         // See: https://cloud.google.com/storage/docs/xml-api/get-bucket-list
 
         debug_assert!(
-            Self::is_supported_url(&url),
+            Self::is_supported_url(&self.config, &url),
             "{url} is not a supported GCS URL",
             url = url.as_str()
         );
@@ -732,11 +723,8 @@ impl StorageBackend for GoogleStorageBackend {
                 .client
                 .get(url)
                 .header(header::USER_AGENT, USER_AGENT)
-                .header(
-                    GOOGLE_DATE_HEADER,
-                    date.format("%Y%m%dT%H%M%SZ").to_string(),
-                )
-                .header(GOOGLE_CONTENT_SHA256_HEADER, sha256_hex_string([]))
+                .header(X_GOOG_DATE, date.format("%Y%m%dT%H%M%SZ").to_string())
+                .header(X_GOOG_CONTENT_SHA256, sha256_hex_string([]))
                 .build()?;
 
             if let Some(auth) = self.config.google().auth() {
@@ -786,7 +774,7 @@ impl StorageBackend for GoogleStorageBackend {
         // See: https://cloud.google.com/storage/docs/xml-api/post-object-multipart
 
         debug_assert!(
-            Self::is_supported_url(&url),
+            Self::is_supported_url(&self.config, &url),
             "{url} is not a supported GCS URL",
             url = url.as_str()
         );
@@ -802,16 +790,13 @@ impl StorageBackend for GoogleStorageBackend {
             .post(create)
             .header(header::USER_AGENT, USER_AGENT)
             .header(header::CONTENT_LENGTH, "0")
-            .header(
-                GOOGLE_DATE_HEADER,
-                date.format("%Y%m%dT%H%M%SZ").to_string(),
-            )
-            .header(GOOGLE_CONTENT_SHA256_HEADER, sha256_hex_string([]))
+            .header(X_GOOG_DATE, date.format("%Y%m%dT%H%M%SZ").to_string())
+            .header(X_GOOG_CONTENT_SHA256, sha256_hex_string([]))
             .build()?;
 
         if let Some(digest) = digest {
             request.headers_mut().insert(
-                GOOGLE_CONTENT_DIGEST_HEADER,
+                X_GOOG_META_CONTENT_DIGEST,
                 digest
                     .try_into()
                     .expect("invalid content digest header value"),

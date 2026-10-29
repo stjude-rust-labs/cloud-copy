@@ -160,14 +160,10 @@ fn walk_dir(dir: &Path) -> Result<Vec<PathBuf>> {
 fn urls(test: &str) -> Vec<Url> {
     vec![
         // S3 URLs
-        format!("s3://{TEST_BUCKET_NAME}:4566/1/{test}").parse().unwrap(),
-        format!("http://s3.us-east-1.localhost:4566/{TEST_BUCKET_NAME}/2/{test}")
+        format!("s3://{TEST_BUCKET_NAME}/1/{test}").parse().unwrap(),
+        format!("http://localhost:4566/{TEST_BUCKET_NAME}/2/{test}")
             .parse()
             .unwrap(),
-        format!("http://{TEST_BUCKET_NAME}.s3.us-east-1.localhost:4566/3/{test}")
-            .parse()
-            .unwrap(),
-
         // Azure URLs
         format!("az://devstoreaccount1:10000/{TEST_BUCKET_NAME}/1/{test}").parse().unwrap(),
         format!("http://devstoreaccount1.blob.core.windows.net.localhost:10000/{TEST_BUCKET_NAME}/2/{test}").parse().unwrap(),
@@ -183,7 +179,10 @@ fn azure_config() -> AzureConfig {
 }
 
 fn s3_config() -> S3Config {
-    S3Config::default().with_auth("test", "test")
+    S3Config::default()
+        .with_auth("test", "test")
+        .with_endpoint("http://localhost:4566".parse().unwrap())
+        .unwrap()
 }
 
 fn config(overwrite: bool) -> Config {

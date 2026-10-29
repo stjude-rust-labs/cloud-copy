@@ -4,6 +4,7 @@
 //! AWS compatibility layer.
 
 use std::collections::BTreeMap;
+use std::fmt;
 use std::ops::Deref;
 
 use chrono::DateTime;
@@ -11,11 +12,72 @@ use chrono::Utc;
 use hmac::KeyInit;
 use hmac::Mac;
 use reqwest::Request;
+use reqwest::header;
 use sha2::Digest;
 use sha2::Sha256;
 
 /// The HMAC type used in authentication;
 type Hmac = hmac::Hmac<Sha256>;
+
+/// Helper for displaying canonical header names present in the request.
+struct CanonicalHeaderNames<'a>(&'a Request, &'a [&'a str]);
+
+impl fmt::Display for CanonicalHeaderNames<'_> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let mut first = true;
+        for name in self.1 {
+            // The host header is always present
+            if *name == header::HOST.as_str() || self.0.headers().contains_key(*name) {
+                if !first {
+                    write!(f, ";")?;
+                }
+
+                first = false;
+                write!(f, "{name}")?;
+            }
+        }
+
+        Ok(())
+    }
+}
+
+/// Helper for displaying canonical header values present in the request.
+struct CanonicalHeaderValues<'a>(&'a Request, &'a [&'a str]);
+
+impl fmt::Display for CanonicalHeaderValues<'_> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let mut first = true;
+        for name in self.1 {
+            if let Some(value) = self.0.headers().get(*name) {
+                if !first {
+                    writeln!(f)?;
+                }
+
+                write!(
+                    f,
+                    "{name}:{value}",
+                    value = value.to_str().expect("header value should be a string")
+                )?;
+            } else if *name == header::HOST.as_str() {
+                if !first {
+                    writeln!(f)?;
+                }
+
+                let host = self.0.url().host_str().expect("should have host");
+
+                if let Some(port) = self.0.url().port() {
+                    write!(f, "host:{host}:{port}")?;
+                } else {
+                    write!(f, "host:{host}")?;
+                }
+            }
+
+            first = false;
+        }
+
+        Ok(())
+    }
+}
 
 /// Represents a provider of signature information for request signing.
 pub trait SignatureProvider {
@@ -34,10 +96,10 @@ pub trait SignatureProvider {
     /// Gets the name of the service for the request.
     fn service(&self) -> &str;
 
-    /// Gets the name of the date header.
-    fn date_header_name(&self) -> &str;
+    /// Gets the canonical header names in alphabetical order.
+    fn canonical_header_names(&self) -> &[&str];
 
-    /// Gets the name of the content hash header.
+    /// Get the content hash header name.
     fn content_hash_header_name(&self) -> &str;
 
     /// Gets the access key ID to sign with.
@@ -86,12 +148,11 @@ where
 
         Some(format!(
             "{algorithm} \
-             Credential={access_key_id}/{scope},SignedHeaders=host;{content_hash_header_name};\
-             {date_header_name},Signature={signature}",
+             Credential={access_key_id}/{scope},SignedHeaders={canonical_header_names},\
+             Signature={signature}",
             algorithm = self.0.algorithm(),
             access_key_id = self.0.access_key_id(),
-            content_hash_header_name = self.0.content_hash_header_name(),
-            date_header_name = self.0.date_header_name(),
+            canonical_header_names = CanonicalHeaderNames(request, self.0.canonical_header_names()),
         ))
     }
 
@@ -128,12 +189,6 @@ where
             }
         }
 
-        // Get the date header
-        let date = request
-            .headers()
-            .get(self.0.date_header_name())
-            .expect("request missing date header");
-
         // Get the content hash header
         let content_hash = request
             .headers()
@@ -146,22 +201,19 @@ where
 {method}
 {path}
 {query_string}
-host:{domain}
-{content_hash_header}:{content_hash}
-{date_header}:{date}
+{canonical_header_values}
 
-host;{content_hash_header};{date_header}
+{canonical_header_names}
 {content_hash}",
             method = request.method(),
             path = url.path(),
-            domain = request.url().domain().expect("should have domain").trim(),
-            date_header = self.0.date_header_name(),
-            date = date.to_str().expect("date should be a string").trim(),
-            content_hash_header = self.0.content_hash_header_name(),
+            canonical_header_values =
+                CanonicalHeaderValues(request, self.0.canonical_header_names()),
+            canonical_header_names = CanonicalHeaderNames(request, self.0.canonical_header_names()),
             content_hash = content_hash
                 .to_str()
                 .expect("content hash should be a string")
-                .trim()
+                .trim(),
         )
     }
 

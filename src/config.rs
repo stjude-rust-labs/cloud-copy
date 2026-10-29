@@ -15,6 +15,7 @@ use base64::prelude::BASE64_STANDARD;
 use digest_io::IoWrapper;
 use secrecy::SecretString;
 use serde::Deserialize;
+use serde::Deserializer;
 use sha2::Digest;
 use tokio::select;
 use tokio::task::spawn_blocking;
@@ -22,6 +23,7 @@ use tokio_retry2::strategy::ExponentialFactorBackoff;
 use tokio_retry2::strategy::MaxInterval;
 use tokio_util::sync::CancellationToken;
 use tracing::info;
+use url::Url;
 
 /// The default number of retries for network operations.
 const DEFAULT_RETRIES: usize = 5;
@@ -197,6 +199,56 @@ impl S3AuthConfig {
     }
 }
 
+/// Represents an error when setting an S3 endpoint URL.
+#[derive(Debug, thiserror::Error)]
+pub enum S3EndpointError {
+    /// The endpoint URL's scheme was invalid.
+    #[error("S3 endpoint URL `{0}` must use a `http` or `https` scheme")]
+    InvalidScheme(Url),
+    /// The endpoint URL's path was invalid.
+    #[error("S3 endpoint URL `{0}` cannot specify a path")]
+    InvalidPath(Url),
+    /// The endpoint URL's query parameters were invalid.
+    #[error("S3 endpoint URL `{0}` cannot specify query parameters")]
+    InvalidQueryParameters(Url),
+    /// The endpoint URL's fragment was invalid.
+    #[error("S3 endpoint URL `{0}` cannot specify a fragment")]
+    InvalidFragment(Url),
+}
+
+/// Validates an endpoint URL.
+fn validate_endpoint_url(url: Url) -> Result<Url, S3EndpointError> {
+    if !matches!(url.scheme(), "http" | "https") {
+        return Err(S3EndpointError::InvalidScheme(url));
+    }
+
+    if url.path() != "/" {
+        return Err(S3EndpointError::InvalidPath(url));
+    }
+
+    if url.query().is_some() {
+        return Err(S3EndpointError::InvalidQueryParameters(url));
+    }
+
+    if url.fragment().is_some() {
+        return Err(S3EndpointError::InvalidFragment(url));
+    }
+
+    Ok(url)
+}
+
+/// Helper for deserializing an endpoint URL.
+fn deserialize_endpoint_url<'de, D>(deserializer: D) -> Result<Option<Url>, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    use serde::de::Error;
+    Option::<Url>::deserialize(deserializer)?
+        .map(validate_endpoint_url)
+        .transpose()
+        .map_err(D::Error::custom)
+}
+
 /// Represents configuration for AWS S3.
 #[derive(Debug, Clone, Default, Deserialize)]
 pub struct S3Config {
@@ -208,6 +260,9 @@ pub struct S3Config {
     /// If `None`, no authentication header will be put on requests.
     #[serde(default)]
     auth: Option<S3AuthConfig>,
+    /// Stores the endpoint of an S3-compatible service.
+    #[serde(default, deserialize_with = "deserialize_endpoint_url")]
+    endpoint: Option<Url>,
 }
 
 impl S3Config {
@@ -242,6 +297,36 @@ impl S3Config {
         self
     }
 
+    /// Sets the endpoint of an S3-compatible service (e.g. MinIO or Ceph).
+    ///
+    /// Only the scheme, host, and port of the endpoint are used; for example,
+    /// `http://localhost:9000`.
+    ///
+    /// When set, `s3` schemed URLs are sent to the endpoint instead of AWS, and
+    /// `http` and `https` URLs for the endpoint are treated as S3 URLs.
+    ///
+    /// Requests to the endpoint are signed for the configured region, which
+    /// defaults to `us-east-1`.
+    ///
+    /// Defaults to the AWS S3 endpoints.
+    pub fn with_endpoint(mut self, endpoint: Url) -> Result<Self, S3EndpointError> {
+        self.endpoint = Some(validate_endpoint_url(endpoint)?);
+        Ok(self)
+    }
+
+    /// Sets the endpoint of an S3-compatible service.
+    ///
+    /// If `None`, the AWS S3 endpoints are used.
+    ///
+    /// See [`S3Config::with_endpoint`].
+    pub fn with_maybe_endpoint(self, endpoint: Option<Url>) -> Result<Self, S3EndpointError> {
+        if let Some(endpoint) = endpoint {
+            return self.with_endpoint(endpoint);
+        }
+
+        Ok(self)
+    }
+
     /// Gets the default region to apply to `s3` schemed URLs.
     ///
     /// Defaults to `us-east-1`
@@ -254,6 +339,13 @@ impl S3Config {
     /// Returns `None` if requests are not using authentication.
     pub fn auth(&self) -> Option<&S3AuthConfig> {
         self.auth.as_ref()
+    }
+
+    /// Gets the endpoint of an S3-compatible service.
+    ///
+    /// Returns `None` if the AWS S3 endpoints are used.
+    pub fn endpoint(&self) -> Option<&Url> {
+        self.endpoint.as_ref()
     }
 }
 
@@ -633,5 +725,76 @@ impl Config {
         ExponentialFactorBackoff::from_millis(INITIAL_DELAY_MILLIS, BASE_FACTOR)
             .max_duration(MAX_DURATION)
             .take(self.retries())
+    }
+}
+
+#[cfg(test)]
+mod test {
+    use super::*;
+
+    #[test]
+    fn s3_endpoint_is_valid() {
+        S3Config::default()
+            .with_endpoint("http://localhost:9000".parse().unwrap())
+            .unwrap();
+
+        S3Config::default()
+            .with_endpoint("https://localhost/".parse().unwrap())
+            .unwrap();
+
+        serde_json::from_str::<S3Config>(r#"{ "endpoint": "http://127.0.0.1:1234" }"#).unwrap();
+    }
+
+    #[test]
+    fn s3_endpoint_must_use_http_scheme() {
+        let err = S3Config::default()
+            .with_endpoint("foo://bar".parse().unwrap())
+            .unwrap_err();
+        assert_eq!(
+            err.to_string(),
+            "S3 endpoint URL `foo://bar` must use a `http` or `https` scheme"
+        );
+    }
+
+    #[test]
+    fn s3_endpoint_cannot_have_a_path() {
+        let err = S3Config::default()
+            .with_endpoint("http://localhost:9000/foo".parse().unwrap())
+            .unwrap_err();
+        assert_eq!(
+            err.to_string(),
+            "S3 endpoint URL `http://localhost:9000/foo` cannot specify a path"
+        );
+    }
+
+    #[test]
+    fn s3_endpoint_cannot_have_query_parameters() {
+        let err = S3Config::default()
+            .with_endpoint("http://localhost:9000/?foo=bar".parse().unwrap())
+            .unwrap_err();
+        assert_eq!(
+            err.to_string(),
+            "S3 endpoint URL `http://localhost:9000/?foo=bar` cannot specify query parameters"
+        );
+    }
+
+    #[test]
+    fn s3_endpoint_cannot_have_a_fragment() {
+        let err = S3Config::default()
+            .with_endpoint("http://localhost:9000/#foo".parse().unwrap())
+            .unwrap_err();
+        assert_eq!(
+            err.to_string(),
+            "S3 endpoint URL `http://localhost:9000/#foo` cannot specify a fragment"
+        );
+    }
+
+    #[test]
+    fn s3_endpoint_deserialization_validates() {
+        let err = serde_json::from_str::<S3Config>(r#"{ "endpoint": "foo://bar" }"#).unwrap_err();
+        assert_eq!(
+            err.to_string(),
+            "S3 endpoint URL `foo://bar` must use a `http` or `https` scheme at line 1 column 27"
+        );
     }
 }

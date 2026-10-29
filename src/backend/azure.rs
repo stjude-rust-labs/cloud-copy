@@ -61,13 +61,13 @@ const MAX_BLOCK_COUNT: u64 = 50000;
 const MAX_BLOB_SIZE: u64 = MAX_BLOCK_SIZE * MAX_BLOCK_COUNT;
 
 /// The header for the Azure storage version supported.
-const AZURE_VERSION_HEADER: &str = "x-ms-version";
+const X_MS_VERSION: &str = "x-ms-version";
 
 /// The header for the blob type.
-const AZURE_BLOB_TYPE_HEADER: &str = "x-ms-blob-type";
+const X_MS_BLOB_TYPE: &str = "x-ms-blob-type";
 
 /// The header for the CRC64 checksum.
-const AZURE_CONTENT_CRC_HEADER: &str = "x-ms-content-crc64";
+const X_MS_CONTENT_CRC64: &str = "x-ms-content-crc64";
 
 /// The current supported Azure storage version.
 const AZURE_STORAGE_VERSION: &str = "2025-05-05";
@@ -95,7 +95,7 @@ const AZURE_ROOT_CONTAINER: &str = "$root";
 ///
 /// Note: the metadata name *must* be a legal C# identifier (i.e. cannot contain
 /// `-`).
-pub(crate) const AZURE_CONTENT_DIGEST_HEADER: &str = "x-ms-meta-content_digest";
+pub(crate) const X_MS_META_CONTENT_DIGEST: &str = "x-ms-meta-content_digest";
 
 /// Inserts the authentication header to the request.
 fn insert_authentication_header(auth: &AzureAuthConfig, request: &mut Request) -> Result<()> {
@@ -362,9 +362,9 @@ impl Upload for AzureBlobUpload {
             .header(header::CONTENT_LENGTH, length)
             .header(header::CONTENT_TYPE, "application/octet-stream")
             .header(header::DATE, Utc::now().to_http_date())
-            .header(AZURE_VERSION_HEADER, AZURE_STORAGE_VERSION)
-            .header(AZURE_BLOB_TYPE_HEADER, AZURE_BLOB_TYPE)
-            .header(AZURE_CONTENT_CRC_HEADER, checksum)
+            .header(X_MS_VERSION, AZURE_STORAGE_VERSION)
+            .header(X_MS_BLOB_TYPE, AZURE_BLOB_TYPE)
+            .header(X_MS_CONTENT_CRC64, checksum)
             .body(body)
             .build()?;
 
@@ -402,13 +402,13 @@ impl Upload for AzureBlobUpload {
             .header(header::CONTENT_LENGTH, body.len())
             .header(header::CONTENT_TYPE, "application/xml")
             .header(header::DATE, Utc::now().to_http_date())
-            .header(AZURE_VERSION_HEADER, AZURE_STORAGE_VERSION)
+            .header(X_MS_VERSION, AZURE_STORAGE_VERSION)
             .body(body)
             .build()?;
 
         if let Some(digest) = &self.digest {
             request.headers_mut().insert(
-                AZURE_CONTENT_DIGEST_HEADER,
+                X_MS_META_CONTENT_DIGEST,
                 digest
                     .try_into()
                     .expect("invalid content digest header value"),
@@ -504,7 +504,7 @@ impl StorageBackend for AzureBlobStorageBackend {
         Ok(block_size)
     }
 
-    fn is_supported_url(url: &Url) -> bool {
+    fn is_supported_url(_: &Config, url: &Url) -> bool {
         match url.scheme() {
             "az" => true,
             "http" | "https" => {
@@ -587,7 +587,7 @@ impl StorageBackend for AzureBlobStorageBackend {
 
     async fn head(&self, url: Url, must_exist: bool) -> Result<Response> {
         debug_assert!(
-            Self::is_supported_url(&url),
+            Self::is_supported_url(&self.config, &url),
             "{url} is not a supported Azure URL",
             url = url.as_str()
         );
@@ -600,7 +600,7 @@ impl StorageBackend for AzureBlobStorageBackend {
             .header(header::ACCEPT, "application/xml")
             .header(header::USER_AGENT, USER_AGENT)
             .header(header::DATE, Utc::now().to_http_date())
-            .header(AZURE_VERSION_HEADER, AZURE_STORAGE_VERSION)
+            .header(X_MS_VERSION, AZURE_STORAGE_VERSION)
             .build()?;
 
         if let Some(auth) = self.config.azure().auth() {
@@ -623,7 +623,7 @@ impl StorageBackend for AzureBlobStorageBackend {
 
     async fn get(&self, url: Url) -> Result<Response> {
         debug_assert!(
-            Self::is_supported_url(&url),
+            Self::is_supported_url(&self.config, &url),
             "{url} is not a supported Azure URL",
             url = url.as_str()
         );
@@ -635,7 +635,7 @@ impl StorageBackend for AzureBlobStorageBackend {
             .get(url)
             .header(header::USER_AGENT, USER_AGENT)
             .header(header::DATE, Utc::now().to_http_date())
-            .header(AZURE_VERSION_HEADER, AZURE_STORAGE_VERSION)
+            .header(X_MS_VERSION, AZURE_STORAGE_VERSION)
             .build()?;
 
         if let Some(auth) = self.config.azure().auth() {
@@ -658,7 +658,7 @@ impl StorageBackend for AzureBlobStorageBackend {
         exclusive_end: Option<u64>,
     ) -> Result<Response> {
         debug_assert!(
-            Self::is_supported_url(&url),
+            Self::is_supported_url(&self.config, &url),
             "{url} is not a supported Azure URL",
             url = url.as_str()
         );
@@ -677,7 +677,7 @@ impl StorageBackend for AzureBlobStorageBackend {
             .header(header::DATE, Utc::now().to_http_date())
             .header(header::RANGE, range)
             .header(header::IF_MATCH, etag)
-            .header(AZURE_VERSION_HEADER, AZURE_STORAGE_VERSION)
+            .header(X_MS_VERSION, AZURE_STORAGE_VERSION)
             .build()?;
 
         if let Some(auth) = self.config.azure().auth() {
@@ -702,7 +702,7 @@ impl StorageBackend for AzureBlobStorageBackend {
 
     async fn walk(&self, url: Url, first_only: bool) -> Result<Vec<String>> {
         debug_assert!(
-            Self::is_supported_url(&url),
+            Self::is_supported_url(&self.config, &url),
             "{url} is not a supported Azure URL",
             url = url.as_str()
         );
@@ -805,7 +805,7 @@ impl StorageBackend for AzureBlobStorageBackend {
                 .get(url)
                 .header(header::USER_AGENT, USER_AGENT)
                 .header(header::DATE, Utc::now().to_http_date())
-                .header(AZURE_VERSION_HEADER, AZURE_STORAGE_VERSION)
+                .header(X_MS_VERSION, AZURE_STORAGE_VERSION)
                 .build()?;
 
             if let Some(auth) = self.config.azure().auth() {
@@ -872,7 +872,7 @@ impl StorageBackend for AzureBlobStorageBackend {
 
     async fn new_upload(&self, url: Url, digest: Option<String>) -> Result<Self::Upload> {
         debug_assert!(
-            Self::is_supported_url(&url),
+            Self::is_supported_url(&self.config, &url),
             "{url} is not a supported Azure URL",
             url = url.as_str()
         );
