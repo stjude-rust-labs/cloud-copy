@@ -7,21 +7,36 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## Unreleased
 
+### Added
+
+* Added an `endpoint` option to `cloud-copy` to specify a custom S3 endpoint
+  URL to use for requests; also respects the `AWS_ENDPOINT_URL_S3` and
+  `AWS_ENDPOINT_URL` environment variables. When using a custom endpoint URL,
+  the source or destination URL must either use the `s3://` scheme or be in
+  "path-style" form ([#52](https://github.com/stjude-rust-labs/cloud-copy/pull/52)).
+
+### Fixed
+
+* Fixed not including the content metadata header in signed S3/GCS requests
+  when present ([#52](https://github.com/stjude-rust-labs/cloud-copy/pull/52)).
+
 ## 0.11.0 - 10-28-2026
 
-#### Fixed
+### Fixed
 
-* Fixed directory uploads failing on broken symlinks by gracefully skipping them instead of aborting the upload ([#46](https://github.com/stjude-rust-labs/cloud-copy/pull/46)).
-* Fixed partial directory uploads not resuming correctly by ignoring existing files instead of aborting when `RemoteDestinationExists` is encountered ([#46](https://github.com/stjude-rust-labs/cloud-copy/pull/46)).
+* Fixed directory uploads failing on broken symlinks by gracefully skipping
+  them instead of aborting the upload ([#46](https://github.com/stjude-rust-labs/cloud-copy/pull/46)).
+* Fixed partial directory uploads not resuming correctly by ignoring existing
+  files instead of aborting when `RemoteDestinationExists` is encountered ([#46](https://github.com/stjude-rust-labs/cloud-copy/pull/46)).
 * Improved error reporting by including the file path in upload errors ([#46](https://github.com/stjude-rust-labs/cloud-copy/pull/46)).
 
-#### Changed
+### Changed
 
 * Implemented support for localhost URIs for both the Azure and S3 backends ([#49](https://github.com/stjude-rust-labs/cloud-copy/pull/49)).
 
 ## 0.10.1 - 08-27-2026
 
-#### Fixed
+### Fixed
 
 * Fixed listing blobs on Azure storage accounts without a hierarchical
   namespace: the `showonly=files` query parameter is only supported on
@@ -33,7 +48,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## 0.10.0 - 07-17-2026
 
-#### Fixed
+### Fixed
 
 * Fixed CLI event handling panic when resuming a "restart from beginning"
   download ([#40](https://github.com/stjude-rust-labs/cloud-copy/pull/40)).
@@ -41,7 +56,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## 0.9.0 - 06-25-2026
 
-#### Fixed
+### Fixed
 
 * Fixed upload content digests being calculated despite existence of the file
   when requested not to overwrite ([#38](https://github.com/stjude-rust-labs/cloud-copy/pull/38)).
@@ -49,13 +64,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   implementation ([#37](https://github.com/stjude-rust-labs/cloud-copy/pull/37)).
 * Fixed `walk` implementation to filter "directory" blobs from Azure Blob ([#36](https://github.com/stjude-rust-labs/cloud-copy/pull/36)).
 
-#### Changed
+### Changed
 
 * Switched to `floci` for testing S3 in CI ([#36](https://github.com/stjude-rust-labs/cloud-copy/pull/36)).
 
 ## 0.8.0 - 03-20-2026
 
-#### Added
+### Added
 
 * Added support for downloading files using multiple streams in parallel;
   requires not using a download cache as the download cache does not support
@@ -63,18 +78,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## 0.7.0 - 02-04-2026
 
-#### Fixed
+### Fixed
 
 * Download of a directory that ends with a trailing slash may lead to
   improperly formatted entry URLs ([#31](https://github.com/stjude-rust-labs/cloud-copy/pull/31)).
 
-#### Changed
+### Changed
 
 * Updated dependencies to latest ([#31](https://github.com/stjude-rust-labs/cloud-copy/pull/31)).
 
 ## 0.6.0 - 01-12-2026
 
-#### Added
+### Added
 
 * Added a `size` function for getting the resource size of a URL ([#30](https://github.com/stjude-rust-labs/cloud-copy/pull/30)).
 * Added an `exists` function for determining if a URL "exists" as either a file
@@ -82,7 +97,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## 0.5.0 - 11-07-2025
 
-#### Added
+### Added
 
 * Added missing `--version` CLI option ([#28](https://github.com/stjude-rust-labs/cloud-copy/pull/28)).
 * Added `get_content_digest` function for retrieving content digests ([#27](https://github.com/stjude-rust-labs/cloud-copy/pull/27)).
@@ -91,57 +106,57 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   use for attaching content digest metadata to uploaded objects ([#27](https://github.com/stjude-rust-labs/cloud-copy/pull/27)).
 * Added support for Azure Shared Key authentication ([#26](https://github.com/stjude-rust-labs/cloud-copy/pull/26)).
 
-#### Changed
+### Changed
 
 * `Config` now has mutable fields ([#29](https://github.com/stjude-rust-labs/cloud-copy/pull/29)).
 * `Config` now implements a builder pattern for setting configuration options ([#26](https://github.com/stjude-rust-labs/cloud-copy/pull/26)).
 
 ## 0.4.0 - 10-13-2025
 
-#### Added
+### Added
 
 * Implemented a `walk` function that can be used to glob a cloud storage URL ([#24](https://github.com/stjude-rust-labs/cloud-copy/pull/24)).
 
-#### Fixed
+### Fixed
 
 * Fixed Google Cloud Storage uploads not working ([#24](https://github.com/stjude-rust-labs/cloud-copy/pull/24)).
 * Improved progress bar message ([#23](https://github.com/stjude-rust-labs/cloud-copy/pull/23)).
 
 ## 0.3.0 - 09-15-2025
 
-#### Added
+### Added
 
 * Display an indeterminate progress bar on event stream lag ([#19](https://github.com/stjude-rust-labs/cloud-copy/pull/19)).
 
-#### Fixed
+### Fixed
 
 * Ensure required auth options for CLI ([#18](https://github.com/stjude-rust-labs/cloud-copy/pull/18)).
 * Only log message for an upload once the upload has been created ([#17](https://github.com/stjude-rust-labs/cloud-copy/pull/17)).
 
 ## 0.2.1 - 09-11-2025
 
-#### Fixed
+### Fixed
 
 * Fixed progress showing for remote resource that already exists ([#15](https://github.com/stjude-rust-labs/cloud-copy/pull/15)).
 * Fixed progress bar not being removed for failed transfers ([#14](https://github.com/stjude-rust-labs/cloud-copy/pull/14)).
 
 ## 0.2.0 - 09-10-2025
 
-#### Added
+### Added
 
 * Implemented support for Windows ([#12](https://github.com/stjude-rust-labs/cloud-copy/pull/12)).
 * Respect the `--overwrite` option for remote destinations ([#11](https://github.com/stjude-rust-labs/cloud-copy/pull/11)).
 * Implemented an `--overwrite` option in the CLI ([#10](https://github.com/stjude-rust-labs/cloud-copy/pull/10)).
 * Added a `rewrite_url` for changing cloud storage schemed URLs into HTTP URLs ([#9](https://github.com/stjude-rust-labs/cloud-copy/pull/9)).
 
-#### Fixed
+### Fixed
 
 * Made upload progress of small files more consistent ([#11](https://github.com/stjude-rust-labs/cloud-copy/pull/11)).
 * Fixed empty file uploads for Azure Storage ([#11](https://github.com/stjude-rust-labs/cloud-copy/pull/11)).
 
 ## 0.1.0 - 08-19-2025
 
-#### Added
+### Added
 
 * Added `HttpClient` for allowing reuse of an HTTP client between copy
   operations ([#7](https://github.com/stjude-rust-labs/cloud-copy/pull/7)).
@@ -151,13 +166,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 * Added testing with emulators Azurite and localstack ([#4](https://github.com/stjude-rust-labs/cloud-copy/pull/4)).
 * Added initial implementation of `cloud-copy` ([#1](https://github.com/stjude-rust-labs/cloud-copy/pull/1)).
 
-#### Changed
+### Changed
 
 * Reverted the default parallelism back to the system's available parallelism ([#5](https://github.com/stjude-rust-labs/cloud-copy/pull/5)).
 * User agent now includes link to GitHub repository ([#5](https://github.com/stjude-rust-labs/cloud-copy/pull/5)).
 * Changed the default parallelism to 4 times the available parallelism ([#2](https://github.com/stjude-rust-labs/cloud-copy/pull/2)).
 
-#### Fixed
+### Fixed
 
 * Fixed incorrect transfer progress events ([#5](https://github.com/stjude-rust-labs/cloud-copy/pull/5)).
 * Fixed an incorrect `range` header causing an extra byte in the response ([#5](https://github.com/stjude-rust-labs/cloud-copy/pull/5)).
