@@ -202,16 +202,16 @@ impl S3AuthConfig {
 #[derive(Debug, thiserror::Error)]
 pub enum S3EndpointError {
     /// The endpoint URL's scheme was invalid.
-    #[error("endpoint URL `{0}` must use a `http` or `https` scheme")]
+    #[error("S3 endpoint URL `{0}` must use a `http` or `https` scheme")]
     InvalidScheme(Url),
     /// The endpoint URL's path was invalid.
-    #[error("endpoint URL `{0}` cannot specify a path")]
+    #[error("S3 endpoint URL `{0}` cannot specify a path")]
     InvalidPath(Url),
     /// The endpoint URL's query parameters were invalid.
-    #[error("endpoint URL `{0}` cannot specify query parameters")]
+    #[error("S3 endpoint URL `{0}` cannot specify query parameters")]
     InvalidQueryParameters(Url),
     /// The endpoint URL's fragment was invalid.
-    #[error("endpoint URL `{0}` cannot specify a fragment")]
+    #[error("S3 endpoint URL `{0}` cannot specify a fragment")]
     InvalidFragment(Url),
 }
 
@@ -732,7 +732,7 @@ mod test {
             .unwrap_err();
         assert_eq!(
             err.to_string(),
-            "endpoint URL `foo://bar` must use a `http` or `https` scheme"
+            "S3 endpoint URL `foo://bar` must use a `http` or `https` scheme"
         );
     }
 
@@ -743,7 +743,7 @@ mod test {
             .unwrap_err();
         assert_eq!(
             err.to_string(),
-            "endpoint URL `http://localhost:9000/foo` cannot specify a path"
+            "S3 endpoint URL `http://localhost:9000/foo` cannot specify a path"
         );
     }
 
@@ -754,7 +754,7 @@ mod test {
             .unwrap_err();
         assert_eq!(
             err.to_string(),
-            "endpoint URL `http://localhost:9000/?foo=bar` cannot specify query parameters"
+            "S3 endpoint URL `http://localhost:9000/?foo=bar` cannot specify query parameters"
         );
     }
 
@@ -765,7 +765,7 @@ mod test {
             .unwrap_err();
         assert_eq!(
             err.to_string(),
-            "endpoint URL `http://localhost:9000/#foo` cannot specify a fragment"
+            "S3 endpoint URL `http://localhost:9000/#foo` cannot specify a fragment"
         );
     }
 }
