@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## Unreleased
 
+### Fixed
+
+* Fixed issue where S3 `walk` implementation did not work with emulated S3
+  environments that don't support "virtual host" URL forms ([#54](https://github.com/stjude-rust-labs/cloud-copy/pull/54)).
+
 ## 0.12.0 - 10-29-2026
 
 ### Added
