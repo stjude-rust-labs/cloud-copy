@@ -10,8 +10,6 @@ use std::sync::Arc;
 use std::thread::available_parallelism;
 use std::time::Duration;
 
-use anyhow::Result;
-use anyhow::bail;
 use base64::Engine;
 use base64::prelude::BASE64_STANDARD;
 use digest_io::IoWrapper;
@@ -200,6 +198,23 @@ impl S3AuthConfig {
     }
 }
 
+/// Represents an error when setting an S3 endpoint URL.
+#[derive(Debug, thiserror::Error)]
+pub enum S3EndpointError {
+    /// The endpoint URL's scheme was invalid.
+    #[error("endpoint URL `{0}` must use a `http` or `https` scheme")]
+    InvalidScheme(Url),
+    /// The endpoint URL's path was invalid.
+    #[error("endpoint URL `{0}` cannot specify a path")]
+    InvalidPath(Url),
+    /// The endpoint URL's query parameters were invalid.
+    #[error("endpoint URL `{0}` cannot specify query parameters")]
+    InvalidQueryParameters(Url),
+    /// The endpoint URL's fragment was invalid.
+    #[error("endpoint URL `{0}` cannot specify a fragment")]
+    InvalidFragment(Url),
+}
+
 /// Represents configuration for AWS S3.
 #[derive(Debug, Clone, Default, Deserialize)]
 pub struct S3Config {
@@ -260,21 +275,21 @@ impl S3Config {
     /// defaults to `us-east-1`.
     ///
     /// Defaults to the AWS S3 endpoints.
-    pub fn with_endpoint(mut self, endpoint: Url) -> Result<Self> {
+    pub fn with_endpoint(mut self, endpoint: Url) -> Result<Self, S3EndpointError> {
         if !matches!(endpoint.scheme(), "http" | "https") || endpoint.host_str().is_none() {
-            bail!("endpoint URL `{endpoint}` must use a `http` or `https` scheme");
+            return Err(S3EndpointError::InvalidScheme(endpoint));
         }
 
         if endpoint.path() != "/" {
-            bail!("endpoint URL `{endpoint}` cannot specify a path");
+            return Err(S3EndpointError::InvalidPath(endpoint));
         }
 
         if endpoint.query().is_some() {
-            bail!("endpoint URL `{endpoint}` cannot specify query parameters");
+            return Err(S3EndpointError::InvalidQueryParameters(endpoint));
         }
 
         if endpoint.fragment().is_some() {
-            bail!("endpoint URL `{endpoint}` cannot specify a fragment");
+            return Err(S3EndpointError::InvalidFragment(endpoint));
         }
 
         self.endpoint = Some(endpoint);
@@ -286,7 +301,7 @@ impl S3Config {
     /// If `None`, the AWS S3 endpoints are used.
     ///
     /// See [`S3Config::with_endpoint`].
-    pub fn with_maybe_endpoint(self, endpoint: Option<Url>) -> Result<Self> {
+    pub fn with_maybe_endpoint(self, endpoint: Option<Url>) -> Result<Self, S3EndpointError> {
         if let Some(endpoint) = endpoint {
             return self.with_endpoint(endpoint);
         }
