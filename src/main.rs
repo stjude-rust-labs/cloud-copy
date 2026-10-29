@@ -217,8 +217,9 @@ impl Args {
             .with_maybe_region(self.aws_default_region)
             .with_maybe_endpoint(
                 // If the endpoint option was not specified and
-                // `AWS_IGNORE_CONFIGURED_ENDPOINT_URLS` is not set then fallback with
-                // `AWS_ENDPOINT_URL_S3` followed by `AWS_ENDPOINT_URL`.
+                // `AWS_IGNORE_CONFIGURED_ENDPOINT_URLS` is not set then
+                // fallback with `AWS_ENDPOINT_URL_S3` followed by
+                // `AWS_ENDPOINT_URL`.
                 self.aws_endpoint_url.or(
                     if env::var("AWS_IGNORE_CONFIGURED_ENDPOINT_URLS").is_err() {
                         env::var("AWS_ENDPOINT_URL_S3")
