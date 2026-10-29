@@ -1,7 +1,6 @@
 //! Implementation of the S3 storage backend.
 
 use std::borrow::Cow;
-use std::fmt;
 
 use bytes::Bytes;
 use chrono::DateTime;
@@ -26,6 +25,7 @@ use crate::Config;
 use crate::Error;
 use crate::HttpClient;
 use crate::ONE_MEBIBYTE;
+use crate::Port;
 use crate::Result;
 use crate::S3AuthConfig;
 use crate::S3Config;
@@ -260,19 +260,6 @@ impl UrlExt for Url {
             let (bucket, _) = host.split_once('.')?;
             Some((bucket, self.path()))
         }
-    }
-}
-
-/// Helper for formatting a URL's port.
-struct Port<'a>(&'a Url);
-
-impl fmt::Display for Port<'_> {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        if let Some(port) = self.0.port() {
-            write!(f, ":{port}")?;
-        }
-
-        Ok(())
     }
 }
 
@@ -548,8 +535,14 @@ impl StorageBackend for S3StorageBackend {
                     return false;
                 };
 
-                if let Some(endpoint) = config.s3().endpoint().and_then(|e| e.host_str())
-                    && host.eq_ignore_ascii_case(endpoint)
+                // If the url matches the configured endpoint's host and port,
+                // then it is supported
+                if let Some((endpoint_host, endpoint_port)) = config
+                    .s3()
+                    .endpoint()
+                    .and_then(|e| Some((e.host_str()?, e.port_or_known_default())))
+                    && host.eq_ignore_ascii_case(endpoint_host)
+                    && url.port_or_known_default() == endpoint_port
                 {
                     return true;
                 }

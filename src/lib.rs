@@ -96,6 +96,19 @@ const ONE_MEBIBYTE: u64 = 1024 * 1024;
 /// size (256 MiB).
 const BLOCK_SIZE_THRESHOLD: u64 = 256 * ONE_MEBIBYTE;
 
+/// Helper for formatting a URL's optional port.
+struct Port<'a>(&'a Url);
+
+impl fmt::Display for Port<'_> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        if let Some(port) = self.0.port() {
+            write!(f, ":{port}")?;
+        }
+
+        Ok(())
+    }
+}
+
 /// Helper for notifying that a network operation failed and will be retried.
 fn notify_retry(e: &Error, duration: Duration) {
     // Duration of 0 indicates the first attempt; only print the message for a
@@ -311,9 +324,10 @@ impl UrlExt for Url {
             fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
                 write!(
                     f,
-                    "{scheme}://{host}{path}",
+                    "{scheme}://{host}{port}{path}",
                     scheme = self.0.scheme(),
                     host = self.0.host_str().unwrap_or_default(),
+                    port = Port(self.0),
                     path = self.0.path()
                 )
             }
