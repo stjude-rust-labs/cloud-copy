@@ -16,6 +16,7 @@ use futures::TryStreamExt;
 use futures::stream;
 use http_cache_stream_reqwest::CacheStorage;
 use http_cache_stream_reqwest::X_CACHE_KEY;
+use reqwest::Response;
 use reqwest::StatusCode;
 use reqwest::header;
 use tempfile::NamedTempFile;
@@ -114,11 +115,40 @@ impl<B> FileTransferInner<B>
 where
     B: StorageBackend + Send + Sync + 'static,
 {
+    /// Performs a head request for the given source URL.
+    async fn head(
+        &self,
+        source: Url,
+        must_exist: bool,
+        permits: Arc<Semaphore>,
+        cancel: CancellationToken,
+    ) -> Result<Response> {
+        Retry::spawn_notify(
+            self.backend.config().retry_durations(),
+            || {
+                async {
+                    select! {
+                        biased;
+                        _ = cancel.cancelled() => Err(Error::Canceled),
+                        r = async {
+                            let _permit = permits.acquire().await.expect("semaphore was closed");
+                            self.backend.head(source.clone(), must_exist).await
+                        } => r
+                    }
+                }
+                .map_err(Error::into_retry_error)
+            },
+            notify_retry,
+        )
+        .await
+    }
+
     /// Downloads a file to the given destination path.
     async fn download(
         self: &Arc<Self>,
         source: Url,
         destination: &Path,
+        head: Option<Response>,
         permits: Arc<Semaphore>,
         cancel: CancellationToken,
     ) -> Result<()> {
@@ -128,25 +158,14 @@ where
             destination = destination.display(),
         );
 
-        // Start by sending a HEAD request for the file's size and etag
-        let response = Retry::spawn_notify(
-            self.backend.config().retry_durations(),
-            || {
-                async {
-                    select! {
-                        biased;
-                        _ = cancel.cancelled() => Err(Error::Canceled),
-                        r = async {
-                            let _permit = permits.acquire().await.expect("semaphore was closed");
-                            self.backend.head(source.clone(), true).await
-                        } => r
-                    }
-                }
-                .map_err(Error::into_retry_error)
-            },
-            notify_retry,
-        )
-        .await?;
+        // If a HEAD request was not already made for the source, make one now
+        let response = match head {
+            Some(response) => response,
+            None => {
+                self.head(source.clone(), true, permits.clone(), cancel.clone())
+                    .await?
+            }
+        };
 
         let id = next_id();
 
@@ -820,22 +839,34 @@ where
     pub async fn download(&self, source: Url, destination: impl AsRef<Path>) -> Result<()> {
         let destination = destination.as_ref();
 
-        // Start by walking the given URL for files to download
-        let mut entries = Retry::spawn_notify(
-            self.inner.backend.config().retry_durations(),
-            || {
-                async {
-                    select! {
-                        biased;
-                        _ = self.cancel.cancelled() => Err(Error::Canceled),
-                        r = self.inner.backend.walk(source.clone(), false) => r
+        // Start by making a HEAD request for the source
+        let permits = Arc::new(Semaphore::new(self.inner.backend.config().parallelism()));
+        let head = self
+            .inner
+            .head(source.clone(), false, permits.clone(), self.cancel.clone())
+            .await?;
+
+        // If the HEAD response was successful, don't bother walking it as a
+        // directory
+        let mut entries = if head.status().is_success() {
+            Vec::new()
+        } else {
+            Retry::spawn_notify(
+                self.inner.backend.config().retry_durations(),
+                || {
+                    async {
+                        select! {
+                            biased;
+                            _ = self.cancel.cancelled() => Err(Error::Canceled),
+                            r = self.inner.backend.walk(source.clone(), false) => r
+                        }
                     }
-                }
-                .map_err(Error::into_retry_error)
-            },
-            notify_retry,
-        )
-        .await?;
+                    .map_err(Error::into_retry_error)
+                },
+                notify_retry,
+            )
+            .await?
+        };
 
         // Sort the entries
         sort_walk_entries(&source, &mut entries)?;
@@ -849,7 +880,6 @@ where
             }
         }
 
-        let permits = Arc::new(Semaphore::new(self.inner.backend.config().parallelism()));
         let mut set = JoinSet::new();
 
         // If there are no files relative to the given URL, download just the
@@ -859,7 +889,11 @@ where
             let destination = destination.to_path_buf();
             let permits = permits.clone();
             let cancel = self.cancel.clone();
-            set.spawn(async move { inner.download(source, &destination, permits, cancel).await });
+            set.spawn(async move {
+                inner
+                    .download(source, &destination, Some(head), permits, cancel)
+                    .await
+            });
         } else {
             // Otherwise, download each file in turn
             for entry in entries {
@@ -880,9 +914,11 @@ where
                     }
                 }
 
-                set.spawn(
-                    async move { inner.download(source, &destination, permits, cancel).await },
-                );
+                set.spawn(async move {
+                    inner
+                        .download(source, &destination, None, permits, cancel)
+                        .await
+                });
             }
         }
 
