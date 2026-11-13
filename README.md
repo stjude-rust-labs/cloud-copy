@@ -111,7 +111,7 @@ A file or directory may be transferred to cloud storage by invoking
 `cloud-copy`:
 
 ```bash
-$ cloud-copy $SRC $DEST
+cloud-copy $SRC $DEST
 ```
 
 Where `$SRC` is the path to the local file or directory to upload and `$DEST`
@@ -123,7 +123,7 @@ A file or directory may be transferred from cloud storage by invoking
 `cloud-copy`:
 
 ```bash
-$ cloud-copy $SRC $DEST
+cloud-copy $SRC $DEST
 ```
 
 Where `$SRC` is a supported cloud storage service URL and `$DEST` is the local
@@ -140,7 +140,8 @@ Automated tests rely on having the following cloud service emulators installed:
 Use the following command to run Azurite in a Docker container:
 
 ```bash
-docker run -p 10000:10000 mcr.microsoft.com/azure-storage/azurite azurite -l /data --blobHost 0.0.0.0 --loose --skipApiVersionCheck
+docker run -p 10000:10000 mcr.microsoft.com/azure-storage/azurite azurite \
+  -l /data --blobHost 0.0.0.0 --loose --skipApiVersionCheck
 ```
 
 Use the following command to run Floci in a Docker container:
@@ -161,7 +162,9 @@ az storage container create --name cloud-copy-test --connection-string "DefaultE
 To create the bucket with Floci, use the `aws` tool:
 
 ```bash
-AWS_ACCESS_KEY_ID=test AWS_SECRET_ACCESS_KEY=test aws --endpoint-url=http://localhost:4566 s3api create-bucket --bucket cloud-copy-test
+AWS_ACCESS_KEY_ID=test AWS_SECRET_ACCESS_KEY=test aws \
+  --endpoint-url=http://localhost:4566 s3api create-bucket \
+  --bucket cloud-copy-test
 ```
 
 Finally, run the tests:
