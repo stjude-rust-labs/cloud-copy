@@ -152,38 +152,54 @@ where
         permits: Arc<Semaphore>,
         cancel: CancellationToken,
     ) -> Result<()> {
-        info!(
-            "downloading `{source}` to `{destination}`",
-            source = source.display(),
-            destination = destination.display(),
-        );
-
         // If a HEAD request was not already made for the source, make one now
-        let response = match head {
-            Some(response) => response,
+        let head = match head {
+            Some(head) => {
+                // Require the existing HEAD response to be successful
+                if !head.status().is_success() {
+                    return Err(Error::Server {
+                        status: head.status(),
+                        message: String::new(),
+                    });
+                }
+
+                head
+            }
             None => {
                 self.head(source.clone(), true, permits.clone(), cancel.clone())
                     .await?
             }
         };
 
+        // If the object is a directory object, just create the directory
+        if self.backend.is_directory_object(head.headers()) {
+            fs::create_dir_all(destination).await?;
+            return Ok(());
+        }
+
+        info!(
+            "downloading `{source}` to `{destination}`",
+            source = source.display(),
+            destination = destination.display(),
+        );
+
         let id = next_id();
 
         // Check for a strong etag
-        let etag = response
+        let etag = head
             .headers()
             .get(header::ETAG)
             .and_then(|v| v.to_str().ok())
             .filter(|&v| !v.trim_start().starts_with("W/"));
 
         // Get the content length
-        let content_length = response
+        let content_length = head
             .headers()
             .get(header::CONTENT_LENGTH)
             .and_then(|v| v.to_str().ok()?.parse().ok());
 
         // Check to see if ranged requests are accepted
-        let accept_ranges = response
+        let accept_ranges = head
             .headers()
             .get(header::ACCEPT_RANGES)
             .map(|v| v.to_str().ok() == Some(SUPPORTED_RANGE_UNIT))
@@ -841,35 +857,53 @@ where
 
         // Start by making a HEAD request for the source
         let permits = Arc::new(Semaphore::new(self.inner.backend.config().parallelism()));
-        let head = self
-            .inner
-            .head(source.clone(), false, permits.clone(), self.cancel.clone())
-            .await?;
 
-        // If the HEAD response was successful, don't bother walking it as a
-        // directory
-        let mut entries = if head.status().is_success() {
-            Vec::new()
+        // A walk of the URL is required when:
+        //   * The URL ends with a slash, denoting a "directory"
+        //   * A HEAD request is successful and the backend considers it a
+        //     directory
+        //   * The HEAD request was not successful (i.e. 404)
+        let (walk, head) = if !source.path().ends_with('/') {
+            let head = self
+                .inner
+                .head(source.clone(), false, permits.clone(), self.cancel.clone())
+                .await?;
+
+            (
+                !head.status().is_success()
+                    || self.inner.backend.is_directory_object(head.headers()),
+                Some(head),
+            )
         } else {
-            Retry::spawn_notify(
+            (true, None)
+        };
+
+        let entries = if !walk {
+            None
+        } else {
+            let mut entries = Retry::spawn_notify(
                 self.inner.backend.config().retry_durations(),
                 || {
                     async {
                         select! {
                             biased;
                             _ = self.cancel.cancelled() => Err(Error::Canceled),
-                            r = self.inner.backend.walk(source.clone(), false) => r
+                            r = self.inner.backend.walk(source.clone(), false) => r,
                         }
                     }
                     .map_err(Error::into_retry_error)
                 },
                 notify_retry,
             )
-            .await?
-        };
+            .await?;
 
-        // Sort the entries
-        sort_walk_entries(&source, &mut entries)?;
+            // Sort the entries
+            if let Some(entries) = &mut entries {
+                sort_walk_entries(&source, entries)?;
+            }
+
+            entries
+        };
 
         // Delete the destination if it exists
         if let Ok(metadata) = destination.metadata() {
@@ -882,41 +916,51 @@ where
 
         let mut set = JoinSet::new();
 
-        // If there are no files relative to the given URL, download just the
-        // given URL
-        if entries.is_empty() {
-            let inner = self.inner.clone();
-            let destination = destination.to_path_buf();
-            let permits = permits.clone();
-            let cancel = self.cancel.clone();
-            set.spawn(async move {
-                inner
-                    .download(source, &destination, Some(head), permits, cancel)
-                    .await
-            });
-        } else {
-            // Otherwise, download each file in turn
-            for entry in entries {
+        match entries {
+            Some(entries) => {
+                fs::create_dir_all(destination).await?;
+
+                // Otherwise, download each file in turn
+                for entry in entries {
+                    // If the entry ends with a slash, it is a directory
+                    if entry.ends_with('/') {
+                        fs::create_dir_all(destination.join(entry)).await?;
+                        continue;
+                    }
+
+                    let inner = self.inner.clone();
+                    let mut source = source.clone();
+                    let mut destination = destination.to_path_buf();
+                    let permits = permits.clone();
+                    let cancel = self.cancel.clone();
+
+                    // Adjust source and destination based on the provided
+                    // relative URL path
+                    {
+                        let mut segments =
+                            source.path_segments_mut().expect("URL should have a path");
+                        segments.pop_if_empty();
+                        for segment in entry.split('/') {
+                            segments.push(segment);
+                            destination.push(segment);
+                        }
+                    }
+
+                    set.spawn(async move {
+                        inner
+                            .download(source, &destination, None, permits, cancel)
+                            .await
+                    });
+                }
+            }
+            None => {
                 let inner = self.inner.clone();
-                let mut source = source.clone();
-                let mut destination = destination.to_path_buf();
+                let destination = destination.to_path_buf();
                 let permits = permits.clone();
                 let cancel = self.cancel.clone();
-
-                // Adjust source and destination based on the provided relative
-                // URL path
-                {
-                    let mut segments = source.path_segments_mut().expect("URL should have a path");
-                    segments.pop_if_empty();
-                    for segment in entry.split('/') {
-                        segments.push(segment);
-                        destination.push(segment);
-                    }
-                }
-
                 set.spawn(async move {
                     inner
-                        .download(source, &destination, None, permits, cancel)
+                        .download(source, &destination, head, permits, cancel)
                         .await
                 });
             }
