@@ -149,9 +149,9 @@ pub trait StorageBackend {
     /// object type.
     ///
     /// Services like Azure support a HEAD request for a directory object with
-    /// or without a trailing backslash.
+    /// or without a trailing slash.
     ///
-    /// When it does not contain a trailing backslash, this method is used to
+    /// When it does not contain a trailing slash, this method is used to
     /// determine if the HEAD request specified the object was a "directory".
     fn is_directory_object(&self, headers: &HeaderMap) -> bool;
 }
