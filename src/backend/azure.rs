@@ -69,6 +69,9 @@ const X_MS_BLOB_TYPE: &str = "x-ms-blob-type";
 /// The header for the CRC64 checksum.
 const X_MS_CONTENT_CRC64: &str = "x-ms-content-crc64";
 
+/// The header for resource type.
+const X_MS_RESOURCE_TYPE: &str = "x-ms-resource-type";
+
 /// The current supported Azure storage version.
 const AZURE_STORAGE_VERSION: &str = "2025-05-05";
 
@@ -700,7 +703,7 @@ impl StorageBackend for AzureBlobStorageBackend {
         Ok(response)
     }
 
-    async fn walk(&self, url: Url, first_only: bool) -> Result<Vec<String>> {
+    async fn walk(&self, url: Url, first_only: bool) -> Result<Option<Vec<String>>> {
         debug_assert!(
             Self::is_supported_url(&self.config, &url),
             "{url} is not a supported Azure URL",
@@ -819,45 +822,42 @@ impl StorageBackend for AzureBlobStorageBackend {
             }
 
             let text = response.text().await?;
-            let mut results: Results = match serde_xml_rs::from_str(&text) {
+            let results: Results = match serde_xml_rs::from_str(&text) {
                 Ok(response) => response,
                 Err(e) => {
                     return Err(AzureError::UnexpectedResponse { status, error: e }.into());
                 }
             };
 
-            // On accounts with a hierarchical namespace enabled, the listing
-            // includes "directory" blobs, which hold metadata such as access
-            // control lists and must not be treated as downloadable files;
-            // exclude them from the results. Flat-namespace accounts never
-            // return a resource type.
-            results
-                .blobs
-                .items
-                .retain(|b| b.properties.resource_type.as_deref() != Some("directory"));
-
-            // If there is only one result and the result is an empty path, then
-            // the given URL was to a file and not a "directory"
-            if paths.is_empty()
-                && results.blobs.items.len() == 1
-                && results.next.is_none()
-                && let Some("") = results.blobs.items[0].name.strip_prefix(&prefix)
+            // If there are no results, it is not a directory
+            if next.is_empty()
+                && results.blobs.items.is_empty()
+                && matches!(results.next.as_deref(), None | Some(""))
             {
-                return Ok(paths);
+                return Ok(None);
             }
 
-            paths.extend(results.blobs.items.into_iter().map(|b| {
+            paths.extend(results.blobs.items.into_iter().filter_map(|b| {
                 let name = b.name.strip_prefix(&prefix).unwrap_or(&b.name);
-                name.strip_prefix('/').unwrap_or(name).into()
+                let mut name = name.strip_prefix('/').unwrap_or(name).to_string();
+
+                if name.is_empty() {
+                    // Don't return the requested directory itself
+                    return None;
+                }
+
+                // Ensure directory objects end with a `/`
+                if b.properties.resource_type.as_deref() == Some("directory")
+                    && !name.ends_with('/')
+                {
+                    name.push('/');
+                }
+
+                Some(name)
             }));
 
             next = results.next.unwrap_or_default();
-
-            // When returning the first entry only, keep listing until an
-            // entry survives the directory filtering above or the listing is
-            // exhausted; stopping on the first page could otherwise report a
-            // non-empty "directory" as empty
-            if (first_only && !paths.is_empty()) || next.is_empty() {
+            if first_only || next.is_empty() {
                 break;
             }
         }
@@ -867,7 +867,7 @@ impl StorageBackend for AzureBlobStorageBackend {
             paths.truncate(1);
         }
 
-        Ok(paths)
+        Ok(Some(paths))
     }
 
     async fn new_upload(&self, url: Url, digest: Option<String>) -> Result<Self::Upload> {
@@ -885,6 +885,13 @@ impl StorageBackend for AzureBlobStorageBackend {
             digest,
             self.events.clone(),
         ))
+    }
+
+    fn is_directory_object(&self, headers: &HeaderMap) -> bool {
+        headers
+            .get(X_MS_RESOURCE_TYPE)
+            .map(|v| v == "directory")
+            .unwrap_or(false)
     }
 }
 

@@ -12,6 +12,7 @@ use reqwest::Request;
 use reqwest::Response;
 use reqwest::StatusCode;
 use reqwest::header;
+use reqwest::header::HeaderMap;
 use reqwest::header::HeaderValue;
 use secrecy::ExposeSecret;
 use serde::Deserialize;
@@ -787,7 +788,7 @@ impl StorageBackend for S3StorageBackend {
         Ok(response)
     }
 
-    async fn walk(&self, mut url: Url, first_only: bool) -> Result<Vec<String>> {
+    async fn walk(&self, mut url: Url, first_only: bool) -> Result<Option<Vec<String>>> {
         // See: https://docs.aws.amazon.com/AmazonS3/latest/API/API_ListObjectsV2.html
 
         debug_assert!(
@@ -821,8 +822,11 @@ impl StorageBackend for S3StorageBackend {
             let mut pairs = url.query_pairs_mut();
             // Use version 2.0 of the API
             pairs.append_pair("list-type", "2");
+
             // Only return objects with this prefix
-            pairs.append_pair("prefix", &prefix);
+            if prefix != "/" {
+                pairs.append_pair("prefix", &prefix);
+            }
 
             // Return at most one key if we're only retrieving the first entry
             if first_only {
@@ -866,19 +870,24 @@ impl StorageBackend for S3StorageBackend {
                 }
             };
 
-            // If there is only one result and the result is an empty path, then
-            // the given URL was to a file and not a "directory"
-            if paths.is_empty()
-                && results.contents.len() == 1
-                && results.token.is_none()
-                && let Some("") = results.contents[0].key.strip_prefix(&prefix)
+            // If there are no results, it is not a directory
+            if token.is_empty()
+                && results.contents.is_empty()
+                && matches!(results.token.as_deref(), None | Some(""))
             {
-                return Ok(paths);
+                return Ok(None);
             }
 
-            paths.extend(results.contents.into_iter().map(|c| {
+            paths.extend(results.contents.into_iter().filter_map(|c| {
                 let key = c.key.strip_prefix(&prefix).unwrap_or(&c.key);
-                key.strip_prefix('/').unwrap_or(key).into()
+                let key = key.strip_prefix('/').unwrap_or(key);
+
+                if key.is_empty() {
+                    // Don't return the requested directory itself
+                    None
+                } else {
+                    Some(key.into())
+                }
             }));
 
             token = results.token.unwrap_or_default();
@@ -887,7 +896,12 @@ impl StorageBackend for S3StorageBackend {
             }
         }
 
-        Ok(paths)
+        // Only the first entry is returned when requested
+        if first_only {
+            paths.truncate(1);
+        }
+
+        Ok(Some(paths))
     }
 
     async fn new_upload(&self, url: Url, digest: Option<String>) -> Result<Self::Upload> {
@@ -950,5 +964,12 @@ impl StorageBackend for S3StorageBackend {
             id,
             events: self.events.clone(),
         })
+    }
+
+    fn is_directory_object(&self, headers: &HeaderMap) -> bool {
+        headers
+            .get(header::CONTENT_TYPE)
+            .map(|v| v == "application/x-directory")
+            .unwrap_or(false)
     }
 }

@@ -923,8 +923,11 @@ pub fn rewrite_url<'a>(config: &Config, url: &'a Url) -> Result<Cow<'a, Url>> {
 /// Returns a lexicographically-sorted list of relative paths from the given
 /// URL.
 ///
-/// If the given storage URL is not a directory, an empty list is returned.
-pub async fn walk(config: Config, client: HttpClient, mut url: Url) -> Result<Vec<String>> {
+/// If the storage URL contains directory objects, the entry will end with a
+/// `/`.
+///
+/// If the given storage URL is not a directory, `Ok(None)` is returned.
+pub async fn walk(config: Config, client: HttpClient, mut url: Url) -> Result<Option<Vec<String>>> {
     if let Ok(mut segments) = url.path_segments_mut() {
         // Push an empty segment to treat the URL as a directory
         // This ensures there is no leading slash in the returned relative
@@ -952,7 +955,9 @@ pub async fn walk(config: Config, client: HttpClient, mut url: Url) -> Result<Ve
     }?;
 
     // Sort the entries
-    sort_walk_entries(&url, &mut entries)?;
+    if let Some(entries) = &mut entries {
+        sort_walk_entries(&url, entries)?;
+    }
     Ok(entries)
 }
 
@@ -1091,7 +1096,7 @@ pub async fn exists(config: Config, client: HttpClient, url: Url) -> Result<bool
         }
 
         // Check for a directory URL
-        Ok(!backend.walk(url.into_owned(), true).await?.is_empty())
+        Ok(backend.walk(url.into_owned(), true).await?.is_some())
     } else if S3StorageBackend::is_supported_url(&config, &url) {
         let url = S3StorageBackend::rewrite_url(&config, &url)?;
         let backend = S3StorageBackend::new(config, client, None);
@@ -1101,7 +1106,7 @@ pub async fn exists(config: Config, client: HttpClient, url: Url) -> Result<bool
         }
 
         // Check for a directory URL
-        Ok(!backend.walk(url.into_owned(), true).await?.is_empty())
+        Ok(backend.walk(url.into_owned(), true).await?.is_some())
     } else if GoogleStorageBackend::is_supported_url(&config, &url) {
         let url = GoogleStorageBackend::rewrite_url(&config, &url)?;
         let backend = GoogleStorageBackend::new(config, client, None);
@@ -1111,7 +1116,7 @@ pub async fn exists(config: Config, client: HttpClient, url: Url) -> Result<bool
         }
 
         // Check for a directory URL
-        Ok(!backend.walk(url.into_owned(), true).await?.is_empty())
+        Ok(backend.walk(url.into_owned(), true).await?.is_some())
     } else {
         let backend = GenericStorageBackend::new(config, client, None);
         Ok(backend.head(url, false).await?.status().is_success())

@@ -11,6 +11,7 @@ use http_cache_stream_reqwest::storage::DefaultCacheStorage;
 use reqwest::Response;
 use reqwest::StatusCode;
 use reqwest::header;
+use reqwest::header::HeaderMap;
 use tokio::sync::broadcast;
 use tracing::debug;
 use url::Url;
@@ -219,12 +220,17 @@ impl StorageBackend for GenericStorageBackend {
         Ok(response)
     }
 
-    async fn walk(&self, _: Url, _: bool) -> Result<Vec<String>> {
+    async fn walk(&self, _: Url, _: bool) -> Result<Option<Vec<String>>> {
         // The generic backend treats all URLs as files.
-        Ok(Default::default())
+        Ok(None)
     }
 
     async fn new_upload(&self, _: Url, _: Option<String>) -> Result<Self::Upload> {
         panic!("generic storage backend cannot be used for uploading");
+    }
+
+    fn is_directory_object(&self, _: &HeaderMap) -> bool {
+        // The generic backend has no concept of a "directory" object
+        false
     }
 }

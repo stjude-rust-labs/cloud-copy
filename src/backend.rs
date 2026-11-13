@@ -6,6 +6,7 @@ use bytes::Bytes;
 use http_cache_stream_reqwest::Cache;
 use http_cache_stream_reqwest::storage::DefaultCacheStorage;
 use reqwest::Response;
+use reqwest::header::HeaderMap;
 use tokio::sync::broadcast;
 use url::Url;
 
@@ -120,10 +121,17 @@ pub trait StorageBackend {
     ///
     /// Returns a list of relative paths from the given URL.
     ///
-    /// If the given storage URL is not a directory, an empty list is returned.
+    /// If the storage URL contains directory objects, the entry will end with a
+    /// `/`.
+    ///
+    /// If the given storage URL is not a directory, `Ok(None)` is returned.
     ///
     /// If `first_only` is true, only the first entry is returned.
-    fn walk(&self, url: Url, first_only: bool) -> impl Future<Output = Result<Vec<String>>> + Send;
+    fn walk(
+        &self,
+        url: Url,
+        first_only: bool,
+    ) -> impl Future<Output = Result<Option<Vec<String>>>> + Send;
 
     /// Creates a new upload.
     ///
@@ -136,4 +144,14 @@ pub trait StorageBackend {
         url: Url,
         digest: Option<String>,
     ) -> impl Future<Output = Result<Self::Upload>> + Send;
+
+    /// Determines if the given response headers are for a known "directory"
+    /// object type.
+    ///
+    /// Services like Azure support a HEAD request for a directory object with
+    /// or without a trailing slash.
+    ///
+    /// When it does not contain a trailing slash, this method is used to
+    /// determine if the HEAD request specified the object was a "directory".
+    fn is_directory_object(&self, headers: &HeaderMap) -> bool;
 }
