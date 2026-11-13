@@ -9,8 +9,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+* `cloud-copy` now creates directories for "directory objects" rather than ignoring
+  them and only downloading files ([#56](https://github.com/stjude-rust-labs/cloud-copy/pull/56)).
 * `cloud-copy` now skips walking a source URL as a prefix if an initial HEAD request
   for the source URL succeeds ([#55](https://github.com/stjude-rust-labs/cloud-copy/pull/55)).
+
+### Changed
+
+* The `walk` function now returns directory entries with names that contain a
+  trailing slash to indicate it is a directory ([#56](https://github.com/stjude-rust-labs/cloud-copy/pull/56)).
 
 ## 0.12.1 - 10-29-2026
 
