@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## Unreleased
 
+## 0.13.0 - 11-17-2026
+
 ### Changed
 
 * The `walk` function now returns directory entries with names that contain a
